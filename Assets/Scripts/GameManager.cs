@@ -21,6 +21,8 @@ public class GameManager : MonoBehaviour
     [SerializeField] private GameObject nextRoundButton;
     [SerializeField] private GameObject restartButton;
     [SerializeField] private TMP_Text restartButtonText;
+    [SerializeField] private int firstTargetScore = 100;
+    [SerializeField] private int scoreIncreasePerRound = 50;
 
     private bool isPaused = false;
     private int resumeFrame = -1;
@@ -31,8 +33,6 @@ public class GameManager : MonoBehaviour
     private bool hasEnded = false;
 
     private static int roundIndex = 0;
-
-    private readonly int[] targetScores = { 100, 150, 200 };
 
     private bool roundCleared = false;
 
@@ -68,7 +68,6 @@ public class GameManager : MonoBehaviour
 
         roundText.text =
         "Round " + (roundIndex + 1) +
-        " / " + targetScores.Length +
         "   Target: " + TargetScore;
     }
 
@@ -130,14 +129,7 @@ public class GameManager : MonoBehaviour
 
         if (cleared)
         {
-            if (IsLastRound)
-            {
-                resultTitle.text = "ALL ROUNDS CLEAR";
-            }
-            else
-            {
-                resultTitle.text = "ROUND CLEAR";
-            }
+            resultTitle.text = "ROUND CLEAR";
         }
         else
         {
@@ -155,18 +147,10 @@ public class GameManager : MonoBehaviour
             "Forbidden Hits: " + shootingStats.ForbiddenHits + "\n" +
             "Accuracy: " + shootingStats.Accuracy.ToString("F1") + "%";
 
-        nextRoundButton.SetActive(cleared && !IsLastRound);
+        nextRoundButton.SetActive(cleared);
+        restartButton.SetActive(!cleared);
 
-        restartButton.SetActive(!cleared || IsLastRound);
-
-        if (cleared && IsLastRound)
-        {
-            restartButtonText.text = "Play Again";
-        }
-        else
-        {
-            restartButtonText.text = "Restart";
-        }
+        restartButtonText.text = "Continue";
 
         UpdateBestScore();
 
@@ -175,11 +159,6 @@ public class GameManager : MonoBehaviour
 
     public void RestartGame()
     {
-        if (roundCleared && IsLastRound)
-        {
-            roundIndex = 0;
-        }
-
         Time.timeScale = 1f;
         AudioListener.pause = false;
 
@@ -262,15 +241,7 @@ public class GameManager : MonoBehaviour
     {
         get
         {
-            return targetScores[roundIndex];
-        }
-    }
-
-    private bool IsLastRound
-    {
-        get
-        {
-            return roundIndex == targetScores.Length - 1;
+            return firstTargetScore + roundIndex * scoreIncreasePerRound;
         }
     }
 
@@ -289,7 +260,7 @@ public class GameManager : MonoBehaviour
 
     public void NextRound()
     {
-        if (!hasEnded || !roundCleared || IsLastRound)
+        if (!hasEnded || !roundCleared)
         {
             return;
         }

@@ -607,6 +607,8 @@ MonoBehaviour:
   nextRoundButton: {fileID: 2056123180}
   restartButton: {fileID: 1462859712}
   restartButtonText: {fileID: 547861467}
+  firstTargetScore: 100
+  scoreIncreasePerRound: 50
 --- !u!114 &222978929
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4127,7 +4129,7 @@ MonoBehaviour:
   gameManager: {fileID: 222978928}
   spawnInterval: 1
   targetLifetime: 3
-  maxActiveTargets: 7
+  maxActiveTargets: 10
   maxForbiddenTargets: 3
 --- !u!1 &2003593715
 GameObject:
