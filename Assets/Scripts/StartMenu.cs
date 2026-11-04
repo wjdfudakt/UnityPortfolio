@@ -5,6 +5,8 @@ public class StartMenu : MonoBehaviour
 {
     public void StartGame()
     {
+        GameManager.ResetRounds();
+        
         SceneManager.LoadScene("GameScene");
     }
 
