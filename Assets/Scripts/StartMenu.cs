@@ -10,6 +10,13 @@ public class StartMenu : MonoBehaviour
         SceneManager.LoadScene("GameScene");
     }
 
+    public void StartTimeAttack()
+    {
+        GameSettings.SelectedMode = GameMode.TimeAttack;
+
+        SceneManager.LoadScene("GameScene");
+    }
+
     public void QuitGame()
     {
         Debug.Log("게임 종료 버튼을 눌렀습니다.");

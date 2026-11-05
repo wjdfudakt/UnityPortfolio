@@ -4130,7 +4130,7 @@ MonoBehaviour:
   spawnInterval: 1
   targetLifetime: 3
   maxActiveTargets: 10
-  maxForbiddenTargets: 3
+  maxForbiddenTargets: 2
 --- !u!1 &2003593715
 GameObject:
   m_ObjectHideFlags: 0
