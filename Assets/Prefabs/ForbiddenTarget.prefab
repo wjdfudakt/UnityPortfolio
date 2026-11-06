@@ -239,7 +239,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7cb6e4090c643ae4b8582dcc90aac1f5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShootingTarget
-  scoreValue: -10
+  scoreValue: -20
   targetType: 2
 --- !u!1 &7198495355028941612
 GameObject:

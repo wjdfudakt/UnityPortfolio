@@ -8,14 +8,21 @@ public class TargetMovement : MonoBehaviour
     private Vector3 leftPosition;
     private Vector3 rightPosition;
 
-    private bool movingRight = true;
+    private bool movingRight;
 
     private void Start()
     {
-        Vector3 startPosition = transform.position;
+        Vector3 centerPosition = transform.position;
 
-        leftPosition = startPosition + Vector3.left * moveRange;
-        rightPosition = startPosition + Vector3.right * moveRange;
+        leftPosition = centerPosition + Vector3.left * moveRange;
+        rightPosition = centerPosition + Vector3.right * moveRange;
+
+        float randomOffset = Random.Range(-moveRange, moveRange);
+
+        transform.position =
+            centerPosition + Vector3.right * randomOffset;
+
+        movingRight = Random.value < 0.5f;
     }
 
     private void Update()
@@ -23,13 +30,9 @@ public class TargetMovement : MonoBehaviour
         Vector3 destination;
 
         if (movingRight)
-        {
             destination = rightPosition;
-        }
         else
-        {
             destination = leftPosition;
-        }
 
         transform.position = Vector3.MoveTowards(
             transform.position,
@@ -38,8 +41,6 @@ public class TargetMovement : MonoBehaviour
         );
 
         if (Vector3.Distance(transform.position, destination) < 0.01f)
-        {
             movingRight = !movingRight;
-        }
     }
 }

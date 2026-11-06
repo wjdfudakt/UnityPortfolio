@@ -10,27 +10,18 @@ public enum TargetType
 public class ShootingTarget : MonoBehaviour
 {
     [SerializeField] private int scoreValue = 10;
-
     [SerializeField] private TargetType targetType;
 
-    public TargetType Type
-    {
-        get
-        {
-            return targetType;
-        }
-    }
-
     private ScoreManager scoreManager;
-    private bool isHit = false;
+    private bool isHit;
 
-    public bool IsForbidden
-    {
-        get
-        {
-            return targetType == TargetType.Forbidden;
-        }
-    }
+    private System.Action onTimeAttackHit;
+    private System.Action onReactionHit;
+
+    public TargetType Type => targetType;
+
+    public bool IsForbidden =>
+        targetType == TargetType.Forbidden;
 
     public void Initialize(ScoreManager manager, float lifetime)
     {
@@ -39,14 +30,50 @@ public class ShootingTarget : MonoBehaviour
         Destroy(gameObject, lifetime);
     }
 
+    public void InitializeForTimeAttack(
+        ScoreManager manager,
+        System.Action onHit)
+    {
+        scoreManager = manager;
+        onTimeAttackHit = onHit;
+    }
+
+    public void InitializeForReaction(System.Action onHit)
+    {
+        onReactionHit = onHit;
+    }
+
     public void Hit()
     {
-        if (isHit || scoreManager == null)
+        if (isHit)
+            return;
+
+        if (onReactionHit != null)
         {
+            isHit = true;
+
+            gameObject.SetActive(false);
+            Destroy(gameObject);
+
+            onReactionHit();
             return;
         }
 
+        if (scoreManager == null)
+            return;
+
         isHit = true;
+
+        gameObject.SetActive(false);
+        Destroy(gameObject);
+
+        if (onTimeAttackHit != null)
+        {
+            scoreManager.AddScore(1);
+
+            onTimeAttackHit();
+            return;
+        }
 
         scoreManager.AddScore(scoreValue);
 
@@ -58,7 +85,5 @@ public class ShootingTarget : MonoBehaviour
         {
             Debug.Log("표적 명중! 획득 점수: " + scoreValue);
         }
-
-        Destroy(gameObject);
     }
 }

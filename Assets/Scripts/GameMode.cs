@@ -1,7 +1,8 @@
 public enum GameMode
 {
     Round,
-    TimeAttack
+    TimeAttack,
+    ReactionTime
 }
 
 public static class GameSettings

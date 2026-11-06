@@ -5,14 +5,23 @@ public class StartMenu : MonoBehaviour
 {
     public void StartGame()
     {
+        GameSettings.SelectedMode = GameMode.Round;
+
         GameManager.ResetRounds();
-        
+
         SceneManager.LoadScene("GameScene");
     }
 
     public void StartTimeAttack()
     {
         GameSettings.SelectedMode = GameMode.TimeAttack;
+
+        SceneManager.LoadScene("GameScene");
+    }
+
+    public void StartReactionTime()
+    {
+        GameSettings.SelectedMode = GameMode.ReactionTime;
 
         SceneManager.LoadScene("GameScene");
     }
