@@ -36,6 +36,9 @@ public class ScoreManager : MonoBehaviour
         if (scoreText == null)
             return;
 
+        if (GameSettings.SelectedMode == GameMode.Tracking)
+            return;
+
         bool isReaction =
             gameManager != null && gameManager.IsReactionTime;
 

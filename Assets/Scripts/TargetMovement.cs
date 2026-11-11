@@ -2,37 +2,70 @@ using UnityEngine;
 
 public class TargetMovement : MonoBehaviour
 {
-    [SerializeField] private float moveSpeed = 2f;
-    [SerializeField] private float moveRange = 3f;
+    public enum MovementMode
+    {
+        Horizontal,
+        Vertical,
+        RandomAxis
+    }
 
-    private Vector3 leftPosition;
-    private Vector3 rightPosition;
+    [Header("Movement")]
+    [SerializeField]
+    private MovementMode movementMode = MovementMode.RandomAxis;
 
-    private bool movingRight;
+    [SerializeField, Min(0f)]
+    private float moveSpeed = 2f;
+
+    [SerializeField, Min(0f)]
+    private float moveRange = 0.8f;
+
+    private Vector3 negativeEnd;
+    private Vector3 positiveEnd;
+
+    private bool movingPositive;
 
     private void Start()
     {
         Vector3 centerPosition = transform.position;
 
-        leftPosition = centerPosition + Vector3.left * moveRange;
-        rightPosition = centerPosition + Vector3.right * moveRange;
+        Vector3 moveAxis;
+
+        switch (movementMode)
+        {
+            case MovementMode.Horizontal:
+                moveAxis = Vector3.right;
+                break;
+
+            case MovementMode.Vertical:
+                moveAxis = Vector3.up;
+                break;
+
+            default:
+                moveAxis = Random.value < 0.5f
+                    ? Vector3.right
+                    : Vector3.up;
+                break;
+        }
+
+        negativeEnd = centerPosition - moveAxis * moveRange;
+        positiveEnd = centerPosition + moveAxis * moveRange;
 
         float randomOffset = Random.Range(-moveRange, moveRange);
 
         transform.position =
-            centerPosition + Vector3.right * randomOffset;
+            centerPosition + moveAxis * randomOffset;
 
-        movingRight = Random.value < 0.5f;
+        movingPositive = Random.value < 0.5f;
     }
 
     private void Update()
     {
-        Vector3 destination;
+        if (Time.deltaTime <= 0f || moveSpeed <= 0f || moveRange <= 0f)
+            return;
 
-        if (movingRight)
-            destination = rightPosition;
-        else
-            destination = leftPosition;
+        Vector3 destination = movingPositive
+            ? positiveEnd
+            : negativeEnd;
 
         transform.position = Vector3.MoveTowards(
             transform.position,
@@ -40,7 +73,9 @@ public class TargetMovement : MonoBehaviour
             moveSpeed * Time.deltaTime
         );
 
-        if (Vector3.Distance(transform.position, destination) < 0.01f)
-            movingRight = !movingRight;
+        if (transform.position == destination)
+        {
+            movingPositive = !movingPositive;
+        }
     }
 }

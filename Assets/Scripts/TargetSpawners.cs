@@ -23,6 +23,14 @@ public class TargetSpawner : MonoBehaviour
     [Header("Reaction Test")]
     [SerializeField] private Transform reactionSpawnPoint;
 
+    [Header("Tracking")]
+    [SerializeField] private GameObject trackingTargetPrefab;
+
+    [SerializeField, Min(0f)]
+    private float trackingDepthOffset = 2f;
+
+    private GameObject trackingTargetObject;
+
     private ShootingTarget[] activeTargets;
     private ShootingTarget reactionTarget;
 
@@ -320,12 +328,105 @@ public class TargetSpawner : MonoBehaviour
         reactionTarget = null;
     }
 
+    public Transform SpawnTrackingTarget(
+    out Vector3 minPosition,
+    out Vector3 maxPosition)
+    {
+        minPosition = Vector3.zero;
+        maxPosition = Vector3.zero;
+
+        if (GameSettings.SelectedMode != GameMode.Tracking ||
+            stopped ||
+            !isActiveAndEnabled)
+        {
+            return null;
+        }
+
+        if (trackingTargetPrefab == null ||
+            spawnPoints == null)
+        {
+            Debug.LogError(
+                "트래킹 타겟 프리팹과 Spawn Points를 확인해 주세요.",
+                this
+            );
+
+            return null;
+        }
+
+        bool foundPoint = false;
+
+        foreach (Transform point in spawnPoints)
+        {
+            if (point == null)
+                continue;
+
+            if (!foundPoint)
+            {
+                minPosition = point.position;
+                maxPosition = point.position;
+                foundPoint = true;
+            }
+            else
+            {
+                minPosition = Vector3.Min(
+                    minPosition,
+                    point.position
+                );
+
+                maxPosition = Vector3.Max(
+                    maxPosition,
+                    point.position
+                );
+            }
+        }
+
+        if (!foundPoint ||
+            maxPosition.x - minPosition.x <= 0.01f ||
+            maxPosition.y - minPosition.y <= 0.01f)
+        {
+            Debug.LogError(
+                "트래킹에는 가로와 세로로 떨어진 스폰 포인트들이 필요합니다.",
+                this
+            );
+
+            return null;
+        }
+
+        ClearTrackingTarget();
+
+        minPosition.z -= trackingDepthOffset;
+        maxPosition.z -= trackingDepthOffset;
+
+        Vector3 centerPosition =
+            (minPosition + maxPosition) * 0.5f;
+
+        trackingTargetObject = Instantiate(
+            trackingTargetPrefab,
+            centerPosition,
+            trackingTargetPrefab.transform.rotation
+        );
+
+        return trackingTargetObject.transform;
+    }
+
+    private void ClearTrackingTarget()
+    {
+        if (trackingTargetObject == null)
+            return;
+
+        trackingTargetObject.SetActive(false);
+        Destroy(trackingTargetObject);
+
+        trackingTargetObject = null;
+    }
+
     public void StopSpawning()
     {
         stopped = true;
         enabled = false;
 
         ClearReactionTarget();
+        ClearTrackingTarget();
 
         if (activeTargets == null)
             return;

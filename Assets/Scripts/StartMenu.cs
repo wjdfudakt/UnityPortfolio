@@ -26,6 +26,15 @@ public class StartMenu : MonoBehaviour
         SceneManager.LoadScene("GameScene");
     }
 
+    public void StartTracking()
+    {
+        GameSettings.SelectedMode = GameMode.Tracking;
+
+        GameManager.ResetRounds();
+
+        SceneManager.LoadScene("GameScene");
+    }
+
     public void QuitGame()
     {
         Debug.Log("게임 종료 버튼을 눌렀습니다.");

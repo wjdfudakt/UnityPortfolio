@@ -19,6 +19,9 @@ public class PlayerShooting : MonoBehaviour
 
     private void Update()
     {
+        if (GameSettings.SelectedMode == GameMode.Tracking)
+            return;
+
         if (gameManager == null || !gameManager.IsPlaying)
             return;
 
