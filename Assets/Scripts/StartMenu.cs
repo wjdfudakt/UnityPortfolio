@@ -3,42 +3,23 @@ using UnityEngine.SceneManagement;
 
 public class StartMenu : MonoBehaviour
 {
+    private void Start()
+    {
+        Time.timeScale = 1f;
+        AudioListener.pause = false;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
     public void StartGame()
     {
+        GameManager.ResetRounds();
         GameSettings.SelectedMode = GameMode.Round;
-
-        GameManager.ResetRounds();
-
-        SceneManager.LoadScene("GameScene");
-    }
-
-    public void StartTimeAttack()
-    {
-        GameSettings.SelectedMode = GameMode.TimeAttack;
-
-        SceneManager.LoadScene("GameScene");
-    }
-
-    public void StartReactionTime()
-    {
-        GameSettings.SelectedMode = GameMode.ReactionTime;
-
-        SceneManager.LoadScene("GameScene");
-    }
-
-    public void StartTracking()
-    {
-        GameSettings.SelectedMode = GameMode.Tracking;
-
-        GameManager.ResetRounds();
-
         SceneManager.LoadScene("GameScene");
     }
 
     public void QuitGame()
     {
-        Debug.Log("게임 종료 버튼을 눌렀습니다.");
-
         Application.Quit();
     }
 }

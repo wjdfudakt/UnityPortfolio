@@ -6,6 +6,30 @@ using TMPro;
 [DefaultExecutionOrder(-100)]
 public class GameManager : MonoBehaviour
 {
+    [Header("Hub")]
+    [SerializeField] private HubPlayerController playerPrefab;
+    [SerializeField] private Transform hubSpawnPoint;
+    [SerializeField] private PlayerShooting playerShooting;
+    [SerializeField] private CrosshairUI crosshairUI;
+    [SerializeField] private TMP_Text entryText;
+
+    private HubPlayerController player;
+    private ModeEntrance activeEntrance;
+    private ModeEntrance promptOwner;
+    private bool hasSession;
+    private bool lastRunCompleted;
+    private bool initialized;
+
+    public HubPlayerController Player => player;
+    public TargetSpawner ActiveSpawner => hasSession ? targetSpawner : null;
+    public bool InputReady => initialized && Application.isFocused
+        && Time.frameCount > resumeFrame;
+    public bool CanLook => InputReady && !isPaused
+        && (!hasSession || !hasEnded)
+        && Cursor.lockState == CursorLockMode.Locked;
+    public bool CanMove => CanLook && !hasSession;
+    public bool CanEnterZone => CanMove;
+
     [Header("Game Duration")]
     [SerializeField] private float gameDuration = 60f;
     [SerializeField] private float timeAttackDuration = 60f;
@@ -151,7 +175,9 @@ public class GameManager : MonoBehaviour
     {
         get
         {
-            return !hasEnded
+            return hasSession
+                && InputReady
+                && !hasEnded
                 && !isPaused
                 && Time.frameCount > resumeFrame
                 && (
@@ -164,116 +190,122 @@ public class GameManager : MonoBehaviour
 
     private void Start()
     {
-        Debug.Log(
-            "Selected Game Mode: " + GameSettings.SelectedMode,
+        Time.timeScale = 1f;
+        AudioListener.pause = false;
+        hasSession = false;
+        hasEnded = false;
+        isPaused = false;
+        roundIndex = 0;
+        targetSpawner = null;
+
+        if (!ValidateRequiredReferences())
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+
+            enabled = false;
+            return;
+        }
+
+        maxForbiddenHits = Mathf.Max(1, maxForbiddenHits);
+        reactionAttempts = Mathf.Max(1, reactionAttempts);
+        minReactionWait = Mathf.Max(0.1f, minReactionWait);
+        maxReactionWait = Mathf.Max(minReactionWait, maxReactionWait);
+        reactionFeedbackDuration = Mathf.Max(0.1f, reactionFeedbackDuration);
+
+        resultPanel.SetActive(false);
+        pausePanel.SetActive(false);
+        if (nextRoundButton != null) nextRoundButton.SetActive(false);
+        if (entryText != null) entryText.gameObject.SetActive(false);
+        SetModeHUD(false);
+
+        player = Instantiate(playerPrefab);
+        player.Initialize(this);
+        player.Teleport(hubSpawnPoint);
+        trackingCamera = player.ViewCamera;
+        playerShooting.Configure(this, trackingCamera);
+        initialized = true;
+        resumeFrame = Time.frameCount;
+        ApplyCursor();
+    }
+
+    private bool ValidateRequiredReferences()
+    {
+        string missing = "";
+
+        void Check(UnityEngine.Object reference, string fieldName)
+        {
+            if (reference == null)
+            {
+                missing += "- " + fieldName + "\n";
+            }
+        }
+
+        Check(playerPrefab, "Hub → Player Prefab");
+
+        if (playerPrefab != null)
+        {
+            Check(
+                playerPrefab.ViewCamera,
+                "Player 프리팹 → HubPlayerController → View Camera"
+            );
+        }
+
+        Check(hubSpawnPoint, "Hub → Hub Spawn Point");
+        Check(playerShooting, "Hub → Player Shooting");
+
+        Check(scoreManager, "Managers → Score Manager");
+        Check(shootingStats, "Managers → Shooting Stats");
+
+        Check(timeText, "Game UI → Time Text");
+        Check(roundText, "Game UI → Round Text");
+
+        Check(
+            trackingProgressText,
+            "Tracking → Tracking Progress Text"
+        );
+
+        Check(resultPanel, "Result UI → Result Panel");
+        Check(resultTitle, "Result UI → Result Title");
+        Check(finalScoreText, "Result UI → Final Score Text");
+        Check(resultStatsText, "Result UI → Result Stats Text");
+        Check(bestScoreText, "Result UI → Best Score Text");
+
+        Check(restartButton, "Result UI → Restart Button");
+        Check(restartButtonText, "Result UI → Restart Button Text");
+
+        Check(pausePanel, "Pause UI → Pause Panel");
+
+        if (string.IsNullOrEmpty(missing))
+        {
+            return true;
+        }
+
+        Debug.LogError(
+            "다음 필수 항목이 연결되지 않았습니다:\n" + missing,
             this
         );
 
-        Time.timeScale = 1f;
-        AudioListener.pause = false;
-
-        pausePanel.SetActive(false);
-        resultPanel.SetActive(false);
-
-        maxForbiddenHits = Mathf.Max(1, maxForbiddenHits);
-
-        // 트래킹 모드 초기화
-        if (IsTracking)
-        {
-            InitializeTracking();
-            return;
-        }
-
-        // 반응속도 모드 초기화
-        if (IsReactionTime)
-        {
-            reactionAttempts = Mathf.Max(1, reactionAttempts);
-
-            minReactionWait = Mathf.Max(
-                0.1f,
-                minReactionWait
-            );
-
-            maxReactionWait = Mathf.Max(
-                minReactionWait,
-                maxReactionWait
-            );
-
-            reactionFeedbackDuration = Mathf.Max(
-                0.1f,
-                reactionFeedbackDuration
-            );
-
-            // 씬 진입 프레임의 클릭은 사용하지 않는다.
-            resumeFrame = Time.frameCount;
-
-            if (targetSpawner == null ||
-                !targetSpawner.IsReactionConfigured)
-            {
-                roundText.text = "Reaction Test";
-                timeText.text = "Check Reaction Setup";
-
-                Debug.LogError(
-                    "GameManager의 Target Spawner와 " +
-                    "TargetSpawner의 Game Manager, " +
-                    "Target Prefabs[0], Reaction Spawn Point를 " +
-                    "확인해 주세요.",
-                    this
-                );
-
-                return;
-            }
-
-            BeginReactionWait();
-            return;
-        }
-
-        // 라운드·타임어택 모드 초기화
-        float duration = IsTimeAttack
-            ? timeAttackDuration
-            : gameDuration;
-
-        endTime = Time.time + duration;
-
-        UpdateTimeText();
-
-        roundText.text = IsTimeAttack
-            ? "Time Attack"
-            : "Round " + CurrentRound + "   Target: " + TargetScore;
+        return false;
     }
 
     private void Update()
     {
-        if (hasEnded)
-            return;
+        if (!initialized) return;
 
-        // 라운드·타임어택의 제한 시간을 확인한다.
-        // 트래킹은 UpdateTracking에서 별도로 확인한다.
-        if (!IsReactionTime &&
-            !IsTracking &&
-            !isPaused &&
-            Time.time >= endTime)
+        if (Keyboard.current != null
+            && Keyboard.current.escapeKey.wasPressedThisFrame
+            && !(hasSession && hasEnded))
         {
-            EndGame(false);
-            return;
+            if (isPaused) ResumeGame();
+            else PauseGame();
         }
 
-        if (Keyboard.current != null &&
-            Keyboard.current.escapeKey.wasPressedThisFrame)
-        {
-            if (isPaused)
-            {
-                ResumeGame();
-            }
-            else
-            {
-                PauseGame();
-            }
-        }
-
-        if (!isPaused && !IsReactionTime && !IsTracking)
+        if (!hasSession || hasEnded || isPaused) return;
+        if (!IsReactionTime && !IsTracking)
         {
             UpdateTimeText();
+            if (Time.time >= endTime) EndGame(IsTimeAttack);
         }
     }
 
@@ -468,29 +500,12 @@ public class GameManager : MonoBehaviour
 
         bool isOnTarget = false;
 
-        if (Mouse.current != null)
+        Ray ray = trackingCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+        if (Physics.Raycast(ray, out RaycastHit hit, 100f,
+            Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
         {
-            Vector2 mousePosition =
-                Mouse.current.position.ReadValue();
-
-            if (trackingCamera.pixelRect.Contains(mousePosition))
-            {
-                Ray ray = trackingCamera.ScreenPointToRay(
-                    mousePosition
-                );
-
-                if (Physics.Raycast(
-                    ray,
-                    out RaycastHit hit,
-                    100f,
-                    Physics.DefaultRaycastLayers,
-                    QueryTriggerInteraction.Ignore))
-                {
-                    isOnTarget =
-                        hit.transform == trackingTarget ||
-                        hit.transform.IsChildOf(trackingTarget);
-                }
-            }
+            isOnTarget = hit.transform == trackingTarget
+                || hit.transform.IsChildOf(trackingTarget);
         }
 
         trackingElapsedTime += delta;
@@ -710,6 +725,8 @@ public class GameManager : MonoBehaviour
             return;
 
         hasEnded = true;
+        lastRunCompleted = cleared;
+        ApplyCursor();
 
         roundCleared = IsRoundMode && cleared;
 
@@ -810,14 +827,10 @@ public class GameManager : MonoBehaviour
         // 트래킹 모드는 최고 기록 표시를 사용하지 않는다.
         bestScoreText.gameObject.SetActive(!IsTracking);
 
-        bool usesRounds = IsRoundMode;
-
-        nextRoundButton.SetActive(usesRounds && cleared);
-        restartButton.SetActive(!usesRounds || !cleared);
-
-        restartButtonText.text = (IsReactionTime || IsTracking)
-            ? "Retry"
-            : "Continue";
+        // 결과창은 진행 버튼 하나와 취소 버튼을 사용한다.
+        if (nextRoundButton != null) nextRoundButton.SetActive(false);
+        restartButton.SetActive(true);
+        restartButtonText.text = lastRunCompleted ? "Continue" : "Retry";
 
         resultPanel.SetActive(true);
     }
@@ -893,46 +906,25 @@ public class GameManager : MonoBehaviour
 
     public void PauseGame()
     {
-        if (hasEnded || isPaused)
-            return;
-
-        if (!IsReactionTime &&
-            !IsTracking &&
-            Time.time >= endTime)
-        {
-            return;
-        }
-
+        if (!initialized || isPaused || (hasSession && hasEnded)) return;
         isPaused = true;
-
         Time.timeScale = 0f;
         AudioListener.pause = true;
-
         pausePanel.SetActive(true);
+        ApplyCursor();
     }
 
     public void ResumeGame()
     {
-        if (hasEnded || !isPaused)
-            return;
-
+        if (!initialized || !isPaused) return;
         isPaused = false;
         resumeFrame = Time.frameCount;
-
         Time.timeScale = 1f;
         AudioListener.pause = false;
-
         pausePanel.SetActive(false);
-
-        // 반응속도는 완료 기록을 유지하고,
-        // 진행 중인 시도만 새 무작위 대기로 시작한다.
-        if (IsReactionTime &&
-            reactionState != ReactionState.None)
-        {
+        if (hasSession && IsReactionTime && reactionState != ReactionState.None)
             BeginReactionWait();
-        }
-
-        // 트래킹은 위치와 누적 시간을 유지한 채 계속 진행한다.
+        ApplyCursor();
     }
 
     // --------------------------------------------------
@@ -941,34 +933,23 @@ public class GameManager : MonoBehaviour
 
     public void RestartGame()
     {
-        Time.timeScale = 1f;
-        AudioListener.pause = false;
-
-        // roundIndex를 유지하므로 같은 라운드로 재시작한다.
-        SceneManager.LoadScene("GameScene");
+        ContinueMode();
     }
 
     public void ReturnToMainMenu()
     {
+        if (targetSpawner != null) targetSpawner.StopSpawning();
         roundIndex = 0;
-
         Time.timeScale = 1f;
         AudioListener.pause = false;
-
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
         SceneManager.LoadScene("StartScene");
     }
 
     public void NextRound()
     {
-        if (!IsRoundMode || !hasEnded || !roundCleared)
-            return;
-
-        roundIndex++;
-
-        Time.timeScale = 1f;
-        AudioListener.pause = false;
-
-        SceneManager.LoadScene("GameScene");
+        if (IsRoundMode && roundCleared) ContinueMode();
     }
 
     public static void ResetRounds()
@@ -998,9 +979,160 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    public bool TryEnterZone(ModeEntrance entrance)
+    {
+        if (!CanEnterZone || entrance == null) return false;
+        if (entrance.Spawner == null || entrance.PlayPoint == null
+            || entrance.ExitPoint == null)
+        {
+            Debug.LogError("입장 구역의 Spawner / Play Point / Exit Point를 연결해 주세요.", entrance);
+            return false;
+        }
+        if (!entrance.Spawner.ValidateMode(entrance.Mode, out string error))
+        {
+            Debug.LogError(error, entrance.Spawner);
+            return false;
+        }
+
+        activeEntrance = entrance;
+        targetSpawner = entrance.Spawner;
+        GameSettings.SelectedMode = entrance.Mode;
+        roundIndex = 0;
+        hasSession = true;
+        ClearEntryPrompt(null);
+        BeginAttempt();
+        return true;
+    }
+
+    private void BeginAttempt()
+    {
+        if (activeEntrance == null || targetSpawner == null) return;
+        if (!targetSpawner.ValidateMode(GameSettings.SelectedMode, out string error))
+        {
+            Debug.LogError(error, targetSpawner);
+            CancelMode();
+            return;
+        }
+
+        Time.timeScale = 1f;
+        AudioListener.pause = false;
+        isPaused = false;
+        hasEnded = false;
+        roundCleared = false;
+        lastRunCompleted = false;
+        reactionState = ReactionState.None;
+        completedAttempts = 0;
+        earlyClicks = 0;
+        totalReactionSeconds = 0d;
+        fastestReactionSeconds = double.PositiveInfinity;
+        reactionNextTime = 0d;
+        reactionSpawnTime = 0d;
+        reactionSpawnFrame = -1;
+        trackingTarget = null;
+
+        resultPanel.SetActive(false);
+        pausePanel.SetActive(false);
+        if (nextRoundButton != null) nextRoundButton.SetActive(false);
+        player.Teleport(activeEntrance.PlayPoint);
+        playerShooting.ResetFeedback();
+        if (crosshairUI != null) crosshairUI.ResetFeedback();
+        shootingStats.ResetStats();
+        scoreManager.ResetScore();
+        SetModeHUD(true);
+        resumeFrame = Time.frameCount;
+        targetSpawner.BeginSession(this, scoreManager, CurrentRound);
+        ApplyCursor();
+
+        if (IsTracking) InitializeTracking();
+        else if (IsReactionTime) BeginReactionWait();
+        else
+        {
+            endTime = Time.time + Mathf.Max(0.1f,
+                IsTimeAttack ? timeAttackDuration : gameDuration);
+            roundText.text = IsTimeAttack ? "Time Attack"
+                : "Round " + CurrentRound + "   Target: " + TargetScore;
+            UpdateTimeText();
+        }
+    }
+
+    public void ContinueMode()
+    {
+        if (!initialized || !hasSession || !hasEnded) return;
+        if (IsRoundMode && roundCleared) roundIndex++;
+        BeginAttempt();
+    }
+
+    public void CancelMode()
+    {
+        if (!initialized || !hasSession) return;
+        Transform destination = activeEntrance != null
+            && activeEntrance.ExitPoint != null
+            ? activeEntrance.ExitPoint : hubSpawnPoint;
+        if (targetSpawner != null) targetSpawner.StopSpawning();
+        hasSession = false;
+        hasEnded = false;
+        isPaused = false;
+        roundCleared = false;
+        reactionState = ReactionState.None;
+        trackingTarget = null;
+        targetSpawner = null;
+        activeEntrance = null;
+        roundIndex = 0;
+        Time.timeScale = 1f;
+        AudioListener.pause = false;
+        resultPanel.SetActive(false);
+        pausePanel.SetActive(false);
+        shootingStats.ResetStats();
+        scoreManager.ResetScore();
+        SetModeHUD(false);
+        playerShooting.ResetFeedback();
+        if (crosshairUI != null) crosshairUI.ResetFeedback();
+        ClearEntryPrompt(null);
+        player.Teleport(destination);
+        resumeFrame = Time.frameCount;
+        ApplyCursor();
+    }
+
+    private void SetModeHUD(bool visible)
+    {
+        timeText.gameObject.SetActive(visible);
+        roundText.gameObject.SetActive(visible);
+        trackingProgressText.gameObject.SetActive(visible && IsTracking);
+        scoreManager.SetVisible(visible && !IsReactionTime);
+    }
+
+    public void ShowEntryPrompt(ModeEntrance owner, string message)
+    {
+        if (!CanEnterZone || entryText == null) return;
+        promptOwner = owner;
+        entryText.text = message;
+        entryText.gameObject.SetActive(true);
+    }
+
+    public void ClearEntryPrompt(ModeEntrance owner)
+    {
+        if (owner != null && owner != promptOwner) return;
+        promptOwner = null;
+        if (entryText != null) entryText.gameObject.SetActive(false);
+    }
+
+    private void ApplyCursor()
+    {
+        bool locked = initialized && !isPaused && (!hasSession || !hasEnded);
+        Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
+        Cursor.visible = !locked;
+    }
+
+    private void OnApplicationFocus(bool focused)
+    {
+        if (!focused && initialized) PauseGame();
+    }
+
     private void OnDestroy()
     {
         Time.timeScale = 1f;
         AudioListener.pause = false;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
     }
 }

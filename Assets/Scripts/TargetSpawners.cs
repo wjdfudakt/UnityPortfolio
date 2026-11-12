@@ -38,14 +38,15 @@ public class TargetSpawner : MonoBehaviour
     private float spawnTimer;
 
     private int lastTimeAttackPoint = -1;
-    private bool stopped;
+    private bool stopped = true;
+    private int sessionVersion;
 
     public bool IsReactionConfigured
     {
         get
         {
             return isActiveAndEnabled
-                && !stopped
+                && OwnsSession
                 && gameManager != null
                 && reactionSpawnPoint != null
                 && targetPrefabs != null
@@ -64,59 +65,86 @@ public class TargetSpawner : MonoBehaviour
         activeTargets = new ShootingTarget[pointCount];
     }
 
-    private void Start()
+    // 씬 시작 시 생성하지 않는다. 입장할 때만 GameManager가 호출한다.
+    public void BeginSession(GameManager manager, ScoreManager scores, int round)
     {
-        if (gameManager == null)
-        {
-            Debug.LogError(
-                "TargetSpawner의 Game Manager를 연결해 주세요.",
-                this
-            );
+        StopSpawning();
+        gameManager = manager;
+        scoreManager = scores;
+        activeTargets = new ShootingTarget[spawnPoints == null ? 0 : spawnPoints.Length];
+        spawnTimer = 0f;
+        lastTimeAttackPoint = -1;
+        currentSpawnInterval = Mathf.Max(minSpawnInterval,
+            spawnInterval - Mathf.Max(0, round - 1) * spawnIntervalDecrease);
+        enabled = true;
+        stopped = false;
+    }
 
-            return;
+    private bool OwnsSession => !stopped && gameManager != null
+        && gameManager.ActiveSpawner == this;
+
+    public bool ValidateMode(GameMode mode, out string error)
+    {
+        error = "";
+        if (!gameObject.activeInHierarchy)
+        {
+            error = "구역의 TargetSpawner 오브젝트를 활성화해 주세요.";
+            return false;
+        }
+        if (mode == GameMode.Tracking)
+        {
+            if (trackingTargetPrefab == null)
+            {
+                error = "Tracking Target Prefab을 연결해 주세요.";
+                return false;
+            }
+        }
+        else if (targetPrefabs == null || targetPrefabs.Length == 0
+            || targetPrefabs[0] == null || targetPrefabs[0].Type != TargetType.Static)
+        {
+            error = "Target Prefabs의 Element 0에 Static 타겟을 연결해 주세요.";
+            return false;
+        }
+        if (mode == GameMode.ReactionTime)
+        {
+            if (reactionSpawnPoint != null) return true;
+            error = "Reaction Spawn Point를 연결해 주세요.";
+            return false;
         }
 
-        switch (GameSettings.SelectedMode)
+        bool found = false;
+        Vector3 min = Vector3.zero, max = Vector3.zero;
+        if (spawnPoints != null)
         {
-            case GameMode.Round:
-                {
-                    int completedRounds = gameManager.CurrentRound - 1;
-
-                    currentSpawnInterval = Mathf.Max(
-                        minSpawnInterval,
-                        spawnInterval
-                            - completedRounds * spawnIntervalDecrease
-                    );
-
-                    break;
-                }
-
-            case GameMode.TimeAttack:
-                {
-                    SpawnTimeAttackTarget();
-                    break;
-                }
-
-            case GameMode.ReactionTime:
-                {
-                    break;
-                }
+            foreach (Transform point in spawnPoints)
+            {
+                if (point == null) continue;
+                if (!found) { min = max = point.position; found = true; }
+                else { min = Vector3.Min(min, point.position); max = Vector3.Max(max, point.position); }
+            }
         }
+        if (!found || (mode == GameMode.Tracking
+            && (max.x - min.x <= 0.01f || max.y - min.y <= 0.01f)))
+        {
+            error = "Spawn Points 연결 및 가로·세로 이동 범위를 확인해 주세요.";
+            return false;
+        }
+        return true;
     }
 
     private void Update()
     {
-        if (stopped)
+        if (!OwnsSession || !gameManager.IsPlaying) return;
+        if (GameSettings.SelectedMode == GameMode.TimeAttack)
+        {
+            bool hasTarget = false;
+            foreach (ShootingTarget target in activeTargets)
+                if (target != null) { hasTarget = true; break; }
+            if (!hasTarget) SpawnTimeAttackTarget();
             return;
-
-        if (GameSettings.SelectedMode != GameMode.Round)
-            return;
-
-        if (gameManager == null || !gameManager.IsPlaying)
-            return;
-
+        }
+        if (GameSettings.SelectedMode != GameMode.Round) return;
         spawnTimer += Time.deltaTime;
-
         if (spawnTimer >= currentSpawnInterval)
         {
             spawnTimer = 0f;
@@ -126,7 +154,7 @@ public class TargetSpawner : MonoBehaviour
 
     private void SpawnTarget()
     {
-        if (stopped ||
+        if (!OwnsSession ||
             GameSettings.SelectedMode != GameMode.Round)
         {
             return;
@@ -214,7 +242,7 @@ public class TargetSpawner : MonoBehaviour
 
     private void SpawnTimeAttackTarget()
     {
-        if (stopped ||
+        if (!OwnsSession ||
             GameSettings.SelectedMode != GameMode.TimeAttack)
         {
             return;
@@ -265,9 +293,14 @@ public class TargetSpawner : MonoBehaviour
         lastTimeAttackPoint = pointIndex;
         activeTargets[pointIndex] = newTarget;
 
+        int version = sessionVersion;
         newTarget.InitializeForTimeAttack(
             scoreManager,
-            OnTimeAttackTargetHit
+            () =>
+            {
+                if (version == sessionVersion && OwnsSession)
+                    OnTimeAttackTargetHit();
+            }
         );
     }
 
@@ -301,8 +334,10 @@ public class TargetSpawner : MonoBehaviour
             Quaternion.identity
         );
 
+        int version = sessionVersion;
         reactionTarget.InitializeForReaction(() =>
         {
+            if (version != sessionVersion || !OwnsSession) return;
             reactionTarget = null;
 
             if (!stopped &&
@@ -336,7 +371,7 @@ public class TargetSpawner : MonoBehaviour
         maxPosition = Vector3.zero;
 
         if (GameSettings.SelectedMode != GameMode.Tracking ||
-            stopped ||
+            !OwnsSession ||
             !isActiveAndEnabled)
         {
             return null;
@@ -406,6 +441,7 @@ public class TargetSpawner : MonoBehaviour
             trackingTargetPrefab.transform.rotation
         );
 
+        trackingTargetObject.SetActive(true);
         return trackingTargetObject.transform;
     }
 
@@ -420,10 +456,20 @@ public class TargetSpawner : MonoBehaviour
         trackingTargetObject = null;
     }
 
+    public bool OwnsTarget(ShootingTarget target)
+    {
+        if (!OwnsSession || target == null) return false;
+        if (target == reactionTarget) return true;
+        if (activeTargets != null)
+            foreach (ShootingTarget active in activeTargets)
+                if (target == active) return true;
+        return false;
+    }
+
     public void StopSpawning()
     {
         stopped = true;
-        enabled = false;
+        sessionVersion++;
 
         ClearReactionTarget();
         ClearTrackingTarget();
