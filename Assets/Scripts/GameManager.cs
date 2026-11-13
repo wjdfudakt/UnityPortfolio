@@ -56,6 +56,7 @@ public class GameManager : MonoBehaviour
 
     [Header("Pause UI")]
     [SerializeField] private GameObject pausePanel;
+    [SerializeField] private GameObject exitModeButton;
 
     [Header("Round Settings")]
     [SerializeField] private int firstTargetScore = 100;
@@ -906,11 +907,22 @@ public class GameManager : MonoBehaviour
 
     public void PauseGame()
     {
-        if (!initialized || isPaused || (hasSession && hasEnded)) return;
+        if (!initialized || isPaused || (hasSession && hasEnded))
+            return;
+
         isPaused = true;
+
         Time.timeScale = 0f;
         AudioListener.pause = true;
+
+        // 모드를 플레이하는 중일 때만 종료 버튼을 표시한다.
+        if (exitModeButton != null)
+        {
+            exitModeButton.SetActive(hasSession);
+        }
+
         pausePanel.SetActive(true);
+
         ApplyCursor();
     }
 
