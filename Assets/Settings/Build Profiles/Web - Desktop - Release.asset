@@ -10,14 +10,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 15003, guid: 0000000000000000e000000000000000, type: 0}
-  m_Name: Web - Desktop - Development
+  m_Name: Web - Desktop - Release
   m_EditorClassIdentifier: UnityEditor.dll::UnityEditor.Build.Profile.BuildProfile
   m_AssetVersion: 2
   m_BuildTarget: 20
   m_Subtarget: 0
   m_PlatformId: 84a3bb9e7420477f885e98145999eb20
   m_PlatformBuildProfile:
-    rid: 4911580152279072970
+    rid: 4911580427009654850
   m_ActivePlatformGuid: 
   m_AdditionalPlatformBuildSettings: []
   m_OverrideGlobalSceneList: 0
@@ -524,9 +524,6 @@ MonoBehaviour:
     - line: '|   - m_BuildTarget: AndroidPlayer'
     - line: '|     m_APIs: 150000000b000000i'
     - line: '|     m_Automatic: 1'
-    - line: '|   - m_BuildTarget: WebGLSupport'
-    - line: '|     m_APIs: 0b000000i'
-    - line: '|     m_Automatic: 0'
     - line: '|   m_DefaultShaderChunkSizeInMB: 16'
     - line: '|   m_DefaultShaderChunkCount: 0'
     - line: '|   openGLRequireES31: 0'
@@ -802,14 +799,14 @@ MonoBehaviour:
     - line: '|   webGLExceptionSupport: 1'
     - line: '|   webGLNameFilesAsHashes: 0'
     - line: '|   webGLShowDiagnostics: 0'
-    - line: '|   webGLDataCaching: 0'
+    - line: '|   webGLDataCaching: 1'
     - line: '|   webGLDebugSymbols: 0'
     - line: '|   webGLEmscriptenArgs: '
     - line: '|   webGLModulesDirectory: '
     - line: '|   webGLTemplate: APPLICATION:Default'
     - line: '|   webGLAnalyzeBuildSize: 0'
     - line: '|   webGLUseEmbeddedResources: 0'
-    - line: '|   webGLCompressionFormat: 2'
+    - line: '|   webGLCompressionFormat: 0'
     - line: '|   webGLWasmArithmeticExceptions: 0'
     - line: '|   webGLLinkerTarget: 1'
     - line: '|   webGLThreadsSupport: 0'
@@ -833,7 +830,7 @@ MonoBehaviour:
     - line: '|   scriptingBackend:'
     - line: '|     Android: 1'
     - line: '|   il2cppCompilerConfiguration:'
-    - line: '|     WebGL: 0'
+    - line: '|     WebGL: 2'
     - line: '|   il2cppCodeGeneration:'
     - line: '|     WebGL: 1'
     - line: '|   il2cppLTOMode: {}'
@@ -952,10 +949,10 @@ MonoBehaviour:
   references:
     version: 2
     RefIds:
-    - rid: 4911580152279072970
+    - rid: 4911580427009654850
       type: {class: WebGLPlatformSettings, ns: UnityEditor.WebGL, asm: UnityEditor.WebGL.Extensions}
       data:
-        m_Development: 1
+        m_Development: 0
         m_ConnectProfiler: 0
         m_BuildWithDeepProfilingSupport: 0
         m_BuildWithCodeCoverage: 0
@@ -970,7 +967,7 @@ MonoBehaviour:
         m_InsightsSettingsContainer:
           m_BuildProfileEngineDiagnosticsState: 2
         m_AdaptivePerformanceEnabled: 0
-        m_CodeOptimization: 0
+        m_CodeOptimization: 3
         m_WebGLClientBrowserPath: 
         m_WebGLClientBrowserType: 0
         m_WebGLTextureSubtarget: 1
