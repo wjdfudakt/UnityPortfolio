@@ -13,23 +13,6 @@ public class GameManager : MonoBehaviour
     [SerializeField] private CrosshairUI crosshairUI;
     [SerializeField] private TMP_Text entryText;
 
-    private HubPlayerController player;
-    private ModeEntrance activeEntrance;
-    private ModeEntrance promptOwner;
-    private bool hasSession;
-    private bool lastRunCompleted;
-    private bool initialized;
-
-    public HubPlayerController Player => player;
-    public TargetSpawner ActiveSpawner => hasSession ? targetSpawner : null;
-    public bool InputReady => initialized && Application.isFocused
-        && Time.frameCount > resumeFrame;
-    public bool CanLook => InputReady && !isPaused
-        && (!hasSession || !hasEnded)
-        && Cursor.lockState == CursorLockMode.Locked;
-    public bool CanMove => CanLook && !hasSession;
-    public bool CanEnterZone => CanMove;
-
     [Header("Game Duration")]
     [SerializeField] private float gameDuration = 60f;
     [SerializeField] private float timeAttackDuration = 60f;
@@ -95,7 +78,35 @@ public class GameManager : MonoBehaviour
     [SerializeField, Min(0.1f)]
     private float reactionFeedbackDuration = 0.8f;
 
-    // 반응속도 모드의 진행 상태
+    [Header("Memory Shooting")]
+    [SerializeField, Min(1)]
+    private int memoryFirstSequenceLength = 3;
+
+    [SerializeField, Min(0.1f)]
+    private float memoryPrepareDuration = 1f;
+
+    [SerializeField, Min(0.1f)]
+    private float memoryCueDuration = 0.6f;
+
+    [SerializeField, Min(0.1f)]
+    private float memoryGapDuration = 0.25f;
+
+    [SerializeField, Min(0.1f)]
+    private float memoryFirstAnswerDuration = 15f;
+
+    [SerializeField, Min(0f)]
+    private float memoryExtraSecondsPerRound = 2f;
+
+    // 허브 진행 정보
+    private HubPlayerController player;
+    private ModeEntrance activeEntrance;
+    private ModeEntrance promptOwner;
+
+    private bool hasSession;
+    private bool lastRunCompleted;
+    private bool initialized;
+
+    // 반응속도 모드
     private enum ReactionState
     {
         None,
@@ -119,7 +130,7 @@ public class GameManager : MonoBehaviour
     private double fastestReactionSeconds =
         double.PositiveInfinity;
 
-    // 트래킹 모드의 진행 정보
+    // 트래킹 모드
     private Transform trackingTarget;
 
     private Vector3 trackingMinPosition;
@@ -132,8 +143,36 @@ public class GameManager : MonoBehaviour
     private float trackingSuccessTime;
     private float trackingCurrentSpeed;
     private float trackingLostTime;
-
     private float trackingHoldTime;
+
+    // 메모리 모드
+    private enum MemoryState
+    {
+        None,
+        Preparing,
+        Showing,
+        Gap,
+        Answering,
+        Complete
+    }
+
+    private MemoryState memoryState;
+
+    private ShootingTarget[] memoryTargets;
+    private int[] memorySequence;
+
+    private int memoryShowingIndex;
+    private int memoryCorrectCount;
+    private int memoryShotCount;
+    private int memoryAnswerStartFrame = -1;
+
+    private float memoryPhaseRemaining;
+    private float memoryAnswerDuration;
+    private float memoryAnswerStartTime;
+    private float memoryAnswerEndTime;
+    private float memoryAnswerElapsed;
+
+    private string memoryFailureReason = "";
 
     // 최고 기록 저장 키
     private const string BestScoreKey =
@@ -155,6 +194,26 @@ public class GameManager : MonoBehaviour
     private static int roundIndex;
     private bool roundCleared;
 
+    public HubPlayerController Player => player;
+
+    public TargetSpawner ActiveSpawner =>
+        hasSession ? targetSpawner : null;
+
+    public bool InputReady =>
+        initialized &&
+        Application.isFocused &&
+        Time.frameCount > resumeFrame;
+
+    public bool CanLook =>
+        InputReady &&
+        !isPaused &&
+        (!hasSession || !hasEnded) &&
+        Cursor.lockState == CursorLockMode.Locked;
+
+    public bool CanMove => CanLook && !hasSession;
+
+    public bool CanEnterZone => CanMove;
+
     public bool IsRoundMode =>
         GameSettings.SelectedMode == GameMode.Round;
 
@@ -167,10 +226,16 @@ public class GameManager : MonoBehaviour
     public bool IsTracking =>
         GameSettings.SelectedMode == GameMode.Tracking;
 
+    public bool IsMemory =>
+        GameSettings.SelectedMode == GameMode.Memory;
+
     public int CurrentRound => roundIndex + 1;
 
     private int TargetScore =>
         firstTargetScore + roundIndex * scoreIncreasePerRound;
+
+    private int MemorySequenceLength =>
+        memorySequence == null ? 0 : memorySequence.Length;
 
     public bool IsPlaying
     {
@@ -180,24 +245,35 @@ public class GameManager : MonoBehaviour
                 && InputReady
                 && !hasEnded
                 && !isPaused
-                && Time.frameCount > resumeFrame
                 && (
                     IsReactionTime ||
                     IsTracking ||
+                    IsMemory ||
                     Time.time < endTime
                 );
         }
     }
 
+    public bool CanAnswerMemory =>
+        IsMemory &&
+        IsPlaying &&
+        memoryState == MemoryState.Answering &&
+        Time.frameCount > memoryAnswerStartFrame &&
+        Time.time < memoryAnswerEndTime;
+
     private void Start()
     {
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         hasSession = false;
         hasEnded = false;
         isPaused = false;
+
         roundIndex = 0;
         targetSpawner = null;
+
+        ResetMemoryState();
 
         if (!ValidateRequiredReferences())
         {
@@ -211,22 +287,41 @@ public class GameManager : MonoBehaviour
         maxForbiddenHits = Mathf.Max(1, maxForbiddenHits);
         reactionAttempts = Mathf.Max(1, reactionAttempts);
         minReactionWait = Mathf.Max(0.1f, minReactionWait);
-        maxReactionWait = Mathf.Max(minReactionWait, maxReactionWait);
-        reactionFeedbackDuration = Mathf.Max(0.1f, reactionFeedbackDuration);
+
+        maxReactionWait = Mathf.Max(
+            minReactionWait,
+            maxReactionWait
+        );
+
+        reactionFeedbackDuration = Mathf.Max(
+            0.1f,
+            reactionFeedbackDuration
+        );
 
         resultPanel.SetActive(false);
         pausePanel.SetActive(false);
-        if (nextRoundButton != null) nextRoundButton.SetActive(false);
-        if (entryText != null) entryText.gameObject.SetActive(false);
+
+        if (nextRoundButton != null)
+            nextRoundButton.SetActive(false);
+
+        if (exitModeButton != null)
+            exitModeButton.SetActive(false);
+
+        if (entryText != null)
+            entryText.gameObject.SetActive(false);
+
         SetModeHUD(false);
 
         player = Instantiate(playerPrefab);
         player.Initialize(this);
         player.Teleport(hubSpawnPoint);
+
         trackingCamera = player.ViewCamera;
         playerShooting.Configure(this, trackingCamera);
+
         initialized = true;
         resumeFrame = Time.frameCount;
+
         ApplyCursor();
     }
 
@@ -278,9 +373,7 @@ public class GameManager : MonoBehaviour
         Check(pausePanel, "Pause UI → Pause Panel");
 
         if (string.IsNullOrEmpty(missing))
-        {
             return true;
-        }
 
         Debug.LogError(
             "다음 필수 항목이 연결되지 않았습니다:\n" + missing,
@@ -292,27 +385,46 @@ public class GameManager : MonoBehaviour
 
     private void Update()
     {
-        if (!initialized) return;
+        if (!initialized)
+            return;
 
-        if (Keyboard.current != null
-            && Keyboard.current.escapeKey.wasPressedThisFrame
-            && !(hasSession && hasEnded))
+        if (Keyboard.current != null &&
+            Keyboard.current.escapeKey.wasPressedThisFrame &&
+            !(hasSession && hasEnded))
         {
-            if (isPaused) ResumeGame();
-            else PauseGame();
+            if (isPaused)
+                ResumeGame();
+            else
+                PauseGame();
         }
 
-        if (!hasSession || hasEnded || isPaused) return;
-        if (!IsReactionTime && !IsTracking)
+        if (!hasSession || hasEnded || isPaused)
+            return;
+
+        // 메모리 모드는 별도의 답 입력 시간을 사용한다.
+        if (!IsReactionTime && !IsTracking && !IsMemory)
         {
             UpdateTimeText();
-            if (Time.time >= endTime) EndGame(IsTimeAttack);
+
+            if (Time.time >= endTime)
+            {
+                EndGame(IsTimeAttack);
+            }
         }
     }
 
     private void LateUpdate()
     {
-        // 트래킹 모드 처리
+        if (IsMemory)
+        {
+            if (IsPlaying)
+            {
+                UpdateMemory();
+            }
+
+            return;
+        }
+
         if (IsTracking)
         {
             if (IsPlaying)
@@ -323,7 +435,6 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // 반응속도 모드 처리
         if (!IsReactionTime || !IsPlaying)
             return;
 
@@ -363,25 +474,334 @@ public class GameManager : MonoBehaviour
     }
 
     // --------------------------------------------------
+    // 메모리 모드
+    // --------------------------------------------------
+
+    private void InitializeMemory()
+    {
+        memoryTargets = targetSpawner.SpawnMemoryTargets();
+
+        if (memoryTargets == null || memoryTargets.Length < 2)
+        {
+            Debug.LogError(
+                "메모리 타겟을 생성하지 못했습니다. " +
+                "프리팹과 Spawn Points 연결을 확인해 주세요.",
+                this
+            );
+
+            CancelMode();
+            return;
+        }
+
+        int sequenceLength =
+            Mathf.Max(1, memoryFirstSequenceLength) + roundIndex;
+
+        memorySequence = new int[sequenceLength];
+
+        memoryAnswerDuration =
+            Mathf.Max(0.1f, memoryFirstAnswerDuration)
+            + roundIndex * Mathf.Max(0f, memoryExtraSecondsPerRound);
+
+        memoryCorrectCount = 0;
+        memoryShotCount = 0;
+        memoryAnswerElapsed = 0f;
+        memoryFailureReason = "";
+
+        // 첫 타겟은 전체 타겟 중에서 선택한다.
+        memorySequence[0] = Random.Range(0, memoryTargets.Length);
+
+        for (int i = 1; i < memorySequence.Length; i++)
+        {
+            // 직전 타겟을 제외하고 선택한다.
+            // 다른 타겟을 거친 뒤 같은 타겟이 다시 나올 수 있다.
+            int next = Random.Range(0, memoryTargets.Length - 1);
+
+            if (next >= memorySequence[i - 1])
+            {
+                next++;
+            }
+
+            memorySequence[i] = next;
+        }
+
+        RestartMemoryPresentation();
+    }
+
+    private void RestartMemoryPresentation()
+    {
+        if (memoryTargets == null || memorySequence == null)
+            return;
+
+        foreach (ShootingTarget target in memoryTargets)
+        {
+            if (target != null)
+            {
+                target.SetMemoryCue(false);
+            }
+        }
+
+        memoryShowingIndex = 0;
+        memoryState = MemoryState.Preparing;
+
+        memoryPhaseRemaining = Mathf.Max(
+            0.1f,
+            memoryPrepareDuration
+        );
+
+        roundText.text =
+            "Memory R" + CurrentRound
+            + "   Remember " + MemorySequenceLength;
+
+        timeText.text = "Get Ready";
+    }
+
+    private void UpdateMemory()
+    {
+        if (memoryState == MemoryState.None ||
+            memoryState == MemoryState.Complete)
+        {
+            return;
+        }
+
+        if (!MemoryTargetsAvailable())
+        {
+            FinishMemory(false, "Target unavailable");
+            return;
+        }
+
+        if (memoryState == MemoryState.Answering)
+        {
+            memoryAnswerElapsed = Mathf.Clamp(
+                Time.time - memoryAnswerStartTime,
+                0f,
+                memoryAnswerDuration
+            );
+
+            UpdateTimeText();
+
+            if (Time.time >= memoryAnswerEndTime)
+            {
+                FinishMemory(false, "Time expired");
+            }
+
+            return;
+        }
+
+        memoryPhaseRemaining -= Time.deltaTime;
+
+        if (memoryPhaseRemaining > 0f)
+            return;
+
+        switch (memoryState)
+        {
+            case MemoryState.Preparing:
+                ShowMemoryCue();
+                break;
+
+            case MemoryState.Showing:
+                memoryTargets[
+                    memorySequence[memoryShowingIndex]
+                ].SetMemoryCue(false);
+
+                memoryState = MemoryState.Gap;
+
+                memoryPhaseRemaining = Mathf.Max(
+                    0.1f,
+                    memoryGapDuration
+                );
+                break;
+
+            case MemoryState.Gap:
+                memoryShowingIndex++;
+
+                if (memoryShowingIndex < MemorySequenceLength)
+                {
+                    ShowMemoryCue();
+                }
+                else
+                {
+                    BeginMemoryAnswer();
+                }
+                break;
+        }
+    }
+
+    private bool MemoryTargetsAvailable()
+    {
+        if (memoryTargets == null || memoryTargets.Length < 2)
+            return false;
+
+        foreach (ShootingTarget target in memoryTargets)
+        {
+            if (target == null || !target.isActiveAndEnabled)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void ShowMemoryCue()
+    {
+        memoryState = MemoryState.Showing;
+
+        memoryPhaseRemaining = Mathf.Max(
+            0.1f,
+            memoryCueDuration
+        );
+
+        int targetIndex = memorySequence[memoryShowingIndex];
+
+        memoryTargets[targetIndex].SetMemoryCue(true);
+
+        timeText.text =
+            "Watch " + (memoryShowingIndex + 1)
+            + " / " + MemorySequenceLength;
+    }
+
+    private void BeginMemoryAnswer()
+    {
+        memoryState = MemoryState.Answering;
+
+        memoryAnswerStartTime = Time.time;
+        memoryAnswerEndTime = Time.time + memoryAnswerDuration;
+        memoryAnswerStartFrame = Time.frameCount;
+
+        memoryAnswerElapsed = 0f;
+
+        roundText.text =
+            "Memory R" + CurrentRound
+            + "   Repeat 0 / " + MemorySequenceLength;
+
+        UpdateTimeText();
+    }
+
+    // PlayerShooting에서 한 발당 한 번 호출한다.
+    // 허공이나 벽을 맞혔다면 null을 전달한다.
+    // 반환값은 정답 명중 여부다.
+    public bool SubmitMemoryShot(ShootingTarget target)
+    {
+        if (!IsMemory || !IsPlaying ||
+            memoryState != MemoryState.Answering)
+        {
+            return false;
+        }
+
+        if (Time.time >= memoryAnswerEndTime)
+        {
+            FinishMemory(false, "Time expired");
+            return false;
+        }
+
+        if (!CanAnswerMemory)
+            return false;
+
+        // 결과창이 열리기 전에 마지막 발까지 집계한다.
+        memoryShotCount++;
+
+        memoryAnswerElapsed = Mathf.Clamp(
+            Time.time - memoryAnswerStartTime,
+            0f,
+            memoryAnswerDuration
+        );
+
+        if (target == null ||
+            !target.isActiveAndEnabled ||
+            !target.IsMemoryTarget ||
+            target.MemoryOwner != targetSpawner ||
+            !targetSpawner.OwnsTarget(target))
+        {
+            FinishMemory(false, "Missed target");
+            return false;
+        }
+
+        int targetIndex = target.MemoryIndex;
+
+        if (targetIndex < 0 ||
+            targetIndex >= memoryTargets.Length ||
+            memoryTargets[targetIndex] != target)
+        {
+            FinishMemory(false, "Invalid target");
+            return false;
+        }
+
+        if (targetIndex != memorySequence[memoryCorrectCount])
+        {
+            FinishMemory(false, "Wrong order");
+            return false;
+        }
+
+        target.ShowMemoryCorrect();
+        memoryCorrectCount++;
+
+        roundText.text =
+            "Memory R" + CurrentRound
+            + "   Repeat " + memoryCorrectCount
+            + " / " + MemorySequenceLength;
+
+        if (memoryCorrectCount >= MemorySequenceLength)
+        {
+            FinishMemory(true, "");
+        }
+
+        return true;
+    }
+
+    private void FinishMemory(bool cleared, string reason)
+    {
+        if (!hasSession || hasEnded ||
+            memoryState == MemoryState.None ||
+            memoryState == MemoryState.Complete)
+        {
+            return;
+        }
+
+        if (memoryState == MemoryState.Answering)
+        {
+            memoryAnswerElapsed = Mathf.Clamp(
+                Time.time - memoryAnswerStartTime,
+                0f,
+                memoryAnswerDuration
+            );
+        }
+
+        memoryState = MemoryState.Complete;
+        memoryFailureReason = reason;
+
+        EndGame(cleared);
+    }
+
+    private void ResetMemoryState()
+    {
+        // 実際のターゲット削除はTargetSpawnerが担当する。
+        memoryState = MemoryState.None;
+        memoryTargets = null;
+        memorySequence = null;
+
+        memoryShowingIndex = 0;
+        memoryCorrectCount = 0;
+        memoryShotCount = 0;
+        memoryAnswerStartFrame = -1;
+
+        memoryPhaseRemaining = 0f;
+        memoryAnswerDuration = 0f;
+        memoryAnswerStartTime = 0f;
+        memoryAnswerEndTime = 0f;
+        memoryAnswerElapsed = 0f;
+
+        memoryFailureReason = "";
+    }
+
+    // --------------------------------------------------
     // 트래킹 모드
     // --------------------------------------------------
 
     private void InitializeTracking()
     {
-        trackingStartSpeed = Mathf.Max(
-            0.1f,
-            trackingStartSpeed
-        );
-
-        trackingAcceleration = Mathf.Max(
-            0f,
-            trackingAcceleration
-        );
-
-        trackingLoseDuration = Mathf.Max(
-            0.1f,
-            trackingLoseDuration
-        );
+        trackingStartSpeed = Mathf.Max(0.1f, trackingStartSpeed);
+        trackingAcceleration = Mathf.Max(0f, trackingAcceleration);
+        trackingLoseDuration = Mathf.Max(0.1f, trackingLoseDuration);
 
         trackingRecoveryDuration = Mathf.Max(
             0.1f,
@@ -389,7 +809,6 @@ public class GameManager : MonoBehaviour
         );
 
         trackingHoldTime = 0f;
-
         trackingElapsedTime = 0f;
         trackingSuccessTime = 0f;
         trackingLostTime = 0f;
@@ -429,13 +848,11 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // 이동 범위 중앙에서 시작한다.
         trackingPhase = new Vector2(
             (trackingMaxPosition.x - trackingMinPosition.x) * 0.5f,
             (trackingMaxPosition.y - trackingMinPosition.y) * 0.5f
         );
 
-        // 처음 이동할 대각선 방향을 무작위로 정한다.
         float angle = Random.Range(25f, 65f) * Mathf.Deg2Rad;
 
         trackingDirection = new Vector2(
@@ -444,21 +861,16 @@ public class GameManager : MonoBehaviour
         );
 
         if (Random.value < 0.5f)
-        {
             trackingDirection.x *= -1f;
-        }
 
         if (Random.value < 0.5f)
-        {
             trackingDirection.y *= -1f;
-        }
 
         trackingProgressText.gameObject.SetActive(true);
 
         UpdateTrackingProgress(false);
         UpdateTimeText();
 
-        // 씬 진입 프레임은 측정하지 않는다.
         resumeFrame = Time.frameCount;
     }
 
@@ -478,14 +890,12 @@ public class GameManager : MonoBehaviour
         float height =
             trackingMaxPosition.y - trackingMinPosition.y;
 
-        // 이번 프레임 동안 속도가 증가하는 것을 반영한 이동 거리.
         float moveDistance =
             trackingCurrentSpeed * delta
             + 0.5f * trackingAcceleration * delta * delta;
 
         trackingPhase += trackingDirection * moveDistance;
 
-        // 이동 범위 끝에 닿으면 해당 축의 방향을 반전한다.
         trackingTarget.position = new Vector3(
             trackingMinPosition.x
                 + Mathf.PingPong(trackingPhase.x, width),
@@ -496,53 +906,50 @@ public class GameManager : MonoBehaviour
             (trackingMinPosition.z + trackingMaxPosition.z) * 0.5f
         );
 
-        // 이동한 Collider 위치를 판정에 반영한다.
         Physics.SyncTransforms();
 
         bool isOnTarget = false;
 
-        Ray ray = trackingCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-        if (Physics.Raycast(ray, out RaycastHit hit, 100f,
-            Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        Ray ray = trackingCamera.ViewportPointToRay(
+            new Vector3(0.5f, 0.5f, 0f)
+        );
+
+        if (Physics.Raycast(
+            ray,
+            out RaycastHit hit,
+            100f,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore))
         {
-            isOnTarget = hit.transform == trackingTarget
-                || hit.transform.IsChildOf(trackingTarget);
+            isOnTarget =
+                hit.transform == trackingTarget ||
+                hit.transform.IsChildOf(trackingTarget);
         }
 
         trackingElapsedTime += delta;
 
-        // 플레이 시간이 지날수록 속도가 계속 증가한다.
         trackingCurrentSpeed =
             trackingStartSpeed
             + trackingAcceleration * trackingElapsedTime;
 
         if (isOnTarget)
         {
-            // 결과창에 사용할 누적 추적 시간
             trackingSuccessTime += delta;
 
-            // 타겟을 연속으로 따라간 시간
             trackingHoldTime = Mathf.Min(
                 trackingRecoveryDuration,
                 trackingHoldTime + delta
             );
 
-            // 필요한 유지 시간을 채웠을 때만
-            // 실패까지 남은 시간을 완전히 회복한다.
             if (trackingHoldTime >= trackingRecoveryDuration)
             {
                 trackingLostTime = 0f;
             }
-
-            // 유지 시간을 채우는 동안에는
-            // trackingLostTime을 증가시키거나 초기화하지 않는다.
         }
         else
         {
-            // 타겟을 놓치면 연속 유지 시간은 초기화한다.
             trackingHoldTime = 0f;
 
-            // 이전에 사용한 실패 시간을 이어서 누적한다.
             trackingLostTime = Mathf.Min(
                 trackingLoseDuration,
                 trackingLostTime + delta
@@ -592,7 +999,7 @@ public class GameManager : MonoBehaviour
     }
 
     // --------------------------------------------------
-    // 반응속도 모드
+    // 반응속도 모드 및 공통 사격 허용
     // --------------------------------------------------
 
     private void BeginReactionWait()
@@ -618,24 +1025,32 @@ public class GameManager : MonoBehaviour
         if (!IsPlaying)
             return false;
 
-        // 트래킹 모드에서는 사격하지 않는다.
         if (IsTracking)
             return false;
 
-        // 라운드·타임어택 모드는 바로 사격을 허용한다.
+        if (IsMemory)
+        {
+            if (memoryState == MemoryState.Answering &&
+                Time.time >= memoryAnswerEndTime)
+            {
+                FinishMemory(false, "Time expired");
+                return false;
+            }
+
+            return CanAnswerMemory;
+        }
+
+        // 라운드·타임어택은 바로 사격을 허용한다.
         if (!IsReactionTime)
             return true;
 
         if (reactionState == ReactionState.Waiting)
         {
             earlyClicks++;
-
             ShowReactionFeedback("Too Early!");
-
             return false;
         }
 
-        // 타겟이 화면에 표시된 다음 프레임부터 사격한다.
         return reactionState == ReactionState.TargetVisible
             && Time.frameCount > reactionSpawnFrame;
     }
@@ -691,6 +1106,22 @@ public class GameManager : MonoBehaviour
 
     private void UpdateTimeText()
     {
+        if (IsMemory)
+        {
+            if (memoryState == MemoryState.Answering)
+            {
+                float remaining = Mathf.Max(
+                    0f,
+                    memoryAnswerEndTime - Time.time
+                );
+
+                timeText.text =
+                    "Time: " + Mathf.CeilToInt(remaining);
+            }
+
+            return;
+        }
+
         if (IsReactionTime)
             return;
 
@@ -727,15 +1158,45 @@ public class GameManager : MonoBehaviour
 
         hasEnded = true;
         lastRunCompleted = cleared;
+
         ApplyCursor();
 
         roundCleared = IsRoundMode && cleared;
 
-        targetSpawner.StopSpawning();
+        if (targetSpawner != null)
+        {
+            targetSpawner.StopSpawning();
+        }
 
         UpdateTimeText();
 
-        if (IsTracking)
+        if (IsMemory)
+        {
+            resultTitle.text = cleared
+                ? "MEMORY CLEAR"
+                : "MEMORY FAILED";
+
+            finalScoreText.text =
+                "Round: " + CurrentRound
+                + "\nCorrect: " + memoryCorrectCount
+                + " / " + MemorySequenceLength;
+
+            resultStatsText.text =
+                "Shots: " + memoryShotCount + "\n"
+                + "Answer Time: "
+                + memoryAnswerElapsed.ToString("F1")
+                + " s";
+
+            if (!cleared &&
+                !string.IsNullOrEmpty(memoryFailureReason))
+            {
+                resultStatsText.text +=
+                    "\nReason: " + memoryFailureReason;
+            }
+
+            timeText.text = cleared ? "Complete!" : "Failed";
+        }
+        else if (IsTracking)
         {
             resultTitle.text = "TRACKING FAILED";
 
@@ -760,8 +1221,9 @@ public class GameManager : MonoBehaviour
         }
         else if (IsReactionTime)
         {
-            double averageMs =
-                totalReactionSeconds / completedAttempts * 1000d;
+            double averageMs = completedAttempts > 0
+                ? totalReactionSeconds / completedAttempts * 1000d
+                : 0d;
 
             resultTitle.text = "REACTION TEST COMPLETE";
 
@@ -778,7 +1240,10 @@ public class GameManager : MonoBehaviour
 
             timeText.text = "Complete!";
 
-            UpdateReactionBest((float)averageMs);
+            if (completedAttempts > 0)
+            {
+                UpdateReactionBest((float)averageMs);
+            }
         }
         else if (IsTimeAttack)
         {
@@ -825,13 +1290,18 @@ public class GameManager : MonoBehaviour
             UpdateBestScore();
         }
 
-        // 트래킹 모드는 최고 기록 표시를 사용하지 않는다.
-        bestScoreText.gameObject.SetActive(!IsTracking);
+        // 메모리·트래킹은 이번 구현에서 최고 기록을 표시하지 않는다.
+        bestScoreText.gameObject.SetActive(
+            !IsTracking && !IsMemory
+        );
 
-        // 결과창은 진행 버튼 하나와 취소 버튼을 사용한다.
-        if (nextRoundButton != null) nextRoundButton.SetActive(false);
+        if (nextRoundButton != null)
+            nextRoundButton.SetActive(false);
+
         restartButton.SetActive(true);
-        restartButtonText.text = lastRunCompleted ? "Continue" : "Retry";
+
+        restartButtonText.text =
+            lastRunCompleted ? "Continue" : "Retry";
 
         resultPanel.SetActive(true);
     }
@@ -842,7 +1312,6 @@ public class GameManager : MonoBehaviour
 
     private void UpdateReactionBest(float averageMs)
     {
-        // 측정 횟수가 다르면 최고 기록도 따로 저장한다.
         string key = ReactionBestKey + reactionAttempts;
 
         float best = PlayerPrefs.GetFloat(
@@ -915,7 +1384,6 @@ public class GameManager : MonoBehaviour
         Time.timeScale = 0f;
         AudioListener.pause = true;
 
-        // 모드를 플레이하는 중일 때만 종료 버튼을 표시한다.
         if (exitModeButton != null)
         {
             exitModeButton.SetActive(hasSession);
@@ -928,14 +1396,34 @@ public class GameManager : MonoBehaviour
 
     public void ResumeGame()
     {
-        if (!initialized || !isPaused) return;
+        if (!initialized || !isPaused)
+            return;
+
         isPaused = false;
         resumeFrame = Time.frameCount;
+
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         pausePanel.SetActive(false);
-        if (hasSession && IsReactionTime && reactionState != ReactionState.None)
+
+        if (hasSession &&
+            IsReactionTime &&
+            reactionState != ReactionState.None)
+        {
             BeginReactionWait();
+        }
+
+        if (hasSession && IsMemory &&
+            (memoryState == MemoryState.Preparing ||
+             memoryState == MemoryState.Showing ||
+             memoryState == MemoryState.Gap))
+        {
+            // 표시 중 일시정지를 했다면 같은 순서를 다시 보여준다.
+            RestartMemoryPresentation();
+        }
+
+        // 메모리 답 입력 단계에서는 진행 위치와 남은 시간을 유지한다.
         ApplyCursor();
     }
 
@@ -950,18 +1438,31 @@ public class GameManager : MonoBehaviour
 
     public void ReturnToMainMenu()
     {
-        if (targetSpawner != null) targetSpawner.StopSpawning();
+        if (targetSpawner != null)
+        {
+            targetSpawner.StopSpawning();
+        }
+
+        ResetMemoryState();
+
         roundIndex = 0;
+
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+
         SceneManager.LoadScene("StartScene");
     }
 
     public void NextRound()
     {
-        if (IsRoundMode && roundCleared) ContinueMode();
+        if ((IsRoundMode && roundCleared) ||
+            (IsMemory && lastRunCompleted))
+        {
+            ContinueMode();
+        }
     }
 
     public static void ResetRounds()
@@ -978,7 +1479,6 @@ public class GameManager : MonoBehaviour
         if (!IsRoundMode || !IsPlaying)
             return;
 
-        // X 과녁 파괴 횟수가 제한에 도달하면 즉시 실패한다.
         if (shootingStats.ForbiddenHits >= maxForbiddenHits)
         {
             EndGame(false);
@@ -991,16 +1491,30 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    // --------------------------------------------------
+    // 구역 입장 및 모드 시작
+    // --------------------------------------------------
+
     public bool TryEnterZone(ModeEntrance entrance)
     {
-        if (!CanEnterZone || entrance == null) return false;
-        if (entrance.Spawner == null || entrance.PlayPoint == null
-            || entrance.ExitPoint == null)
+        if (!CanEnterZone || entrance == null)
+            return false;
+
+        if (entrance.Spawner == null ||
+            entrance.PlayPoint == null ||
+            entrance.ExitPoint == null)
         {
-            Debug.LogError("입장 구역의 Spawner / Play Point / Exit Point를 연결해 주세요.", entrance);
+            Debug.LogError(
+                "입장 구역의 Spawner / Play Point / Exit Point를 연결해 주세요.",
+                entrance
+            );
+
             return false;
         }
-        if (!entrance.Spawner.ValidateMode(entrance.Mode, out string error))
+
+        if (!entrance.Spawner.ValidateMode(
+            entrance.Mode,
+            out string error))
         {
             Debug.LogError(error, entrance.Spawner);
             return false;
@@ -1008,18 +1522,26 @@ public class GameManager : MonoBehaviour
 
         activeEntrance = entrance;
         targetSpawner = entrance.Spawner;
+
         GameSettings.SelectedMode = entrance.Mode;
+
         roundIndex = 0;
         hasSession = true;
+
         ClearEntryPrompt(null);
         BeginAttempt();
-        return true;
+
+        return hasSession;
     }
 
     private void BeginAttempt()
     {
-        if (activeEntrance == null || targetSpawner == null) return;
-        if (!targetSpawner.ValidateMode(GameSettings.SelectedMode, out string error))
+        if (activeEntrance == null || targetSpawner == null)
+            return;
+
+        if (!targetSpawner.ValidateMode(
+            GameSettings.SelectedMode,
+            out string error))
         {
             Debug.LogError(error, targetSpawner);
             CancelMode();
@@ -1028,122 +1550,229 @@ public class GameManager : MonoBehaviour
 
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         isPaused = false;
         hasEnded = false;
         roundCleared = false;
         lastRunCompleted = false;
+
         reactionState = ReactionState.None;
         completedAttempts = 0;
         earlyClicks = 0;
         totalReactionSeconds = 0d;
         fastestReactionSeconds = double.PositiveInfinity;
+
         reactionNextTime = 0d;
         reactionSpawnTime = 0d;
         reactionSpawnFrame = -1;
+
         trackingTarget = null;
+
+        ResetMemoryState();
 
         resultPanel.SetActive(false);
         pausePanel.SetActive(false);
-        if (nextRoundButton != null) nextRoundButton.SetActive(false);
+
+        if (nextRoundButton != null)
+            nextRoundButton.SetActive(false);
+
         player.Teleport(activeEntrance.PlayPoint);
+
         playerShooting.ResetFeedback();
-        if (crosshairUI != null) crosshairUI.ResetFeedback();
+
+        if (crosshairUI != null)
+        {
+            crosshairUI.ResetFeedback();
+        }
+
         shootingStats.ResetStats();
         scoreManager.ResetScore();
+
         SetModeHUD(true);
+
         resumeFrame = Time.frameCount;
-        targetSpawner.BeginSession(this, scoreManager, CurrentRound);
+
+        targetSpawner.BeginSession(
+            this,
+            scoreManager,
+            CurrentRound
+        );
+
         ApplyCursor();
 
-        if (IsTracking) InitializeTracking();
-        else if (IsReactionTime) BeginReactionWait();
+        if (IsMemory)
+        {
+            InitializeMemory();
+        }
+        else if (IsTracking)
+        {
+            InitializeTracking();
+        }
+        else if (IsReactionTime)
+        {
+            BeginReactionWait();
+        }
         else
         {
-            endTime = Time.time + Mathf.Max(0.1f,
-                IsTimeAttack ? timeAttackDuration : gameDuration);
-            roundText.text = IsTimeAttack ? "Time Attack"
+            endTime = Time.time + Mathf.Max(
+                0.1f,
+                IsTimeAttack ? timeAttackDuration : gameDuration
+            );
+
+            roundText.text = IsTimeAttack
+                ? "Time Attack"
                 : "Round " + CurrentRound + "   Target: " + TargetScore;
+
             UpdateTimeText();
         }
     }
 
     public void ContinueMode()
     {
-        if (!initialized || !hasSession || !hasEnded) return;
-        if (IsRoundMode && roundCleared) roundIndex++;
+        if (!initialized || !hasSession || !hasEnded)
+            return;
+
+        if ((IsRoundMode && roundCleared) ||
+            (IsMemory && lastRunCompleted))
+        {
+            roundIndex++;
+        }
+
         BeginAttempt();
     }
 
     public void CancelMode()
     {
-        if (!initialized || !hasSession) return;
-        Transform destination = activeEntrance != null
-            && activeEntrance.ExitPoint != null
-            ? activeEntrance.ExitPoint : hubSpawnPoint;
-        if (targetSpawner != null) targetSpawner.StopSpawning();
+        if (!initialized || !hasSession)
+            return;
+
+        Transform destination =
+            activeEntrance != null &&
+            activeEntrance.ExitPoint != null
+                ? activeEntrance.ExitPoint
+                : hubSpawnPoint;
+
+        if (targetSpawner != null)
+        {
+            targetSpawner.StopSpawning();
+        }
+
+        ResetMemoryState();
+
         hasSession = false;
         hasEnded = false;
         isPaused = false;
+
         roundCleared = false;
+        lastRunCompleted = false;
+
         reactionState = ReactionState.None;
         trackingTarget = null;
+
         targetSpawner = null;
         activeEntrance = null;
+
         roundIndex = 0;
+
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         resultPanel.SetActive(false);
         pausePanel.SetActive(false);
+
+        if (exitModeButton != null)
+            exitModeButton.SetActive(false);
+
         shootingStats.ResetStats();
         scoreManager.ResetScore();
+
         SetModeHUD(false);
+
         playerShooting.ResetFeedback();
-        if (crosshairUI != null) crosshairUI.ResetFeedback();
+
+        if (crosshairUI != null)
+        {
+            crosshairUI.ResetFeedback();
+        }
+
         ClearEntryPrompt(null);
+
         player.Teleport(destination);
+
         resumeFrame = Time.frameCount;
+
         ApplyCursor();
     }
+
+    // --------------------------------------------------
+    // 공통 UI 및 커서
+    // --------------------------------------------------
 
     private void SetModeHUD(bool visible)
     {
         timeText.gameObject.SetActive(visible);
         roundText.gameObject.SetActive(visible);
-        trackingProgressText.gameObject.SetActive(visible && IsTracking);
-        scoreManager.SetVisible(visible && !IsReactionTime);
+
+        trackingProgressText.gameObject.SetActive(
+            visible && IsTracking
+        );
+
+        scoreManager.SetVisible(
+            visible && !IsReactionTime && !IsMemory
+        );
     }
 
     public void ShowEntryPrompt(ModeEntrance owner, string message)
     {
-        if (!CanEnterZone || entryText == null) return;
+        if (!CanEnterZone || entryText == null)
+            return;
+
         promptOwner = owner;
+
         entryText.text = message;
         entryText.gameObject.SetActive(true);
     }
 
     public void ClearEntryPrompt(ModeEntrance owner)
     {
-        if (owner != null && owner != promptOwner) return;
+        if (owner != null && owner != promptOwner)
+            return;
+
         promptOwner = null;
-        if (entryText != null) entryText.gameObject.SetActive(false);
+
+        if (entryText != null)
+        {
+            entryText.gameObject.SetActive(false);
+        }
     }
 
     private void ApplyCursor()
     {
-        bool locked = initialized && !isPaused && (!hasSession || !hasEnded);
-        Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
+        bool locked =
+            initialized &&
+            !isPaused &&
+            (!hasSession || !hasEnded);
+
+        Cursor.lockState = locked
+            ? CursorLockMode.Locked
+            : CursorLockMode.None;
+
         Cursor.visible = !locked;
     }
 
     private void OnApplicationFocus(bool focused)
     {
-        if (!focused && initialized) PauseGame();
+        if (!focused && initialized)
+        {
+            PauseGame();
+        }
     }
 
     private void OnDestroy()
     {
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
     }

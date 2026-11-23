@@ -29,6 +29,9 @@ public class TargetSpawner : MonoBehaviour
     [SerializeField, Min(0f)]
     private float trackingDepthOffset = 2f;
 
+    [Header("Memory Shooting")]
+    [SerializeField] private ShootingTarget memoryTargetPrefab;
+
     private GameObject trackingTargetObject;
 
     private ShootingTarget[] activeTargets;
@@ -40,6 +43,11 @@ public class TargetSpawner : MonoBehaviour
     private int lastTimeAttackPoint = -1;
     private bool stopped = true;
     private int sessionVersion;
+
+    private bool OwnsSession =>
+        !stopped &&
+        gameManager != null &&
+        gameManager.ActiveSpawner == this;
 
     public bool IsReactionConfigured
     {
@@ -65,32 +73,54 @@ public class TargetSpawner : MonoBehaviour
         activeTargets = new ShootingTarget[pointCount];
     }
 
-    // 씬 시작 시 생성하지 않는다. 입장할 때만 GameManager가 호출한다.
-    public void BeginSession(GameManager manager, ScoreManager scores, int round)
+    // 씬 시작 시 생성하지 않는다.
+    // 구역에 입장할 때 GameManager가 호출한다.
+    public void BeginSession(
+        GameManager manager,
+        ScoreManager scores,
+        int round)
     {
         StopSpawning();
+
         gameManager = manager;
         scoreManager = scores;
-        activeTargets = new ShootingTarget[spawnPoints == null ? 0 : spawnPoints.Length];
+
+        int pointCount = spawnPoints == null
+            ? 0
+            : spawnPoints.Length;
+
+        activeTargets = new ShootingTarget[pointCount];
+
         spawnTimer = 0f;
         lastTimeAttackPoint = -1;
-        currentSpawnInterval = Mathf.Max(minSpawnInterval,
-            spawnInterval - Mathf.Max(0, round - 1) * spawnIntervalDecrease);
+
+        currentSpawnInterval = Mathf.Max(
+            minSpawnInterval,
+            spawnInterval -
+            Mathf.Max(0, round - 1) * spawnIntervalDecrease
+        );
+
         enabled = true;
         stopped = false;
     }
 
-    private bool OwnsSession => !stopped && gameManager != null
-        && gameManager.ActiveSpawner == this;
-
+    // 선택한 모드에 필요한 연결 상태를 확인한다.
     public bool ValidateMode(GameMode mode, out string error)
     {
         error = "";
+
         if (!gameObject.activeInHierarchy)
         {
             error = "구역의 TargetSpawner 오브젝트를 활성화해 주세요.";
             return false;
         }
+
+        // 메모리 모드는 전용 프리팹과 모든 스폰 포인트를 검사한다.
+        if (mode == GameMode.Memory)
+        {
+            return ValidateMemoryConfiguration(out error);
+        }
+
         if (mode == GameMode.Tracking)
         {
             if (trackingTargetPrefab == null)
@@ -99,52 +129,145 @@ public class TargetSpawner : MonoBehaviour
                 return false;
             }
         }
-        else if (targetPrefabs == null || targetPrefabs.Length == 0
-            || targetPrefabs[0] == null || targetPrefabs[0].Type != TargetType.Static)
+        else if (targetPrefabs == null ||
+                 targetPrefabs.Length == 0 ||
+                 targetPrefabs[0] == null ||
+                 targetPrefabs[0].Type != TargetType.Static)
         {
             error = "Target Prefabs의 Element 0에 Static 타겟을 연결해 주세요.";
             return false;
         }
+
         if (mode == GameMode.ReactionTime)
         {
-            if (reactionSpawnPoint != null) return true;
+            if (reactionSpawnPoint != null)
+                return true;
+
             error = "Reaction Spawn Point를 연결해 주세요.";
             return false;
         }
 
         bool found = false;
-        Vector3 min = Vector3.zero, max = Vector3.zero;
+        Vector3 min = Vector3.zero;
+        Vector3 max = Vector3.zero;
+
         if (spawnPoints != null)
         {
             foreach (Transform point in spawnPoints)
             {
-                if (point == null) continue;
-                if (!found) { min = max = point.position; found = true; }
-                else { min = Vector3.Min(min, point.position); max = Vector3.Max(max, point.position); }
+                if (point == null)
+                    continue;
+
+                if (!found)
+                {
+                    min = point.position;
+                    max = point.position;
+                    found = true;
+                }
+                else
+                {
+                    min = Vector3.Min(min, point.position);
+                    max = Vector3.Max(max, point.position);
+                }
             }
         }
-        if (!found || (mode == GameMode.Tracking
-            && (max.x - min.x <= 0.01f || max.y - min.y <= 0.01f)))
+
+        if (!found ||
+            (mode == GameMode.Tracking &&
+             (max.x - min.x <= 0.01f ||
+              max.y - min.y <= 0.01f)))
         {
             error = "Spawn Points 연결 및 가로·세로 이동 범위를 확인해 주세요.";
             return false;
         }
+
+        return true;
+    }
+
+    // 메모리 모드의 프리팹과 배치 설정을 검사한다.
+    private bool ValidateMemoryConfiguration(out string error)
+    {
+        error = "";
+
+        if (memoryTargetPrefab == null)
+        {
+            error = "Memory Target Prefab을 연결해 주세요.";
+            return false;
+        }
+
+        if (!memoryTargetPrefab.ValidateMemorySetup(out error))
+        {
+            return false;
+        }
+
+        if (spawnPoints == null || spawnPoints.Length < 2)
+        {
+            error = "메모리 모드에는 스폰 포인트가 2개 이상 필요합니다.";
+            return false;
+        }
+
+        for (int i = 0; i < spawnPoints.Length; i++)
+        {
+            if (spawnPoints[i] == null)
+            {
+                error = "Spawn Points의 Element " + i +
+                    "에 스폰 포인트를 연결해 주세요.";
+
+                return false;
+            }
+
+            // 서로 다른 번호의 타겟이 같은 위치에 생성되지 않도록 한다.
+            for (int j = 0; j < i; j++)
+            {
+                float distance = Vector3.Distance(
+                    spawnPoints[i].position,
+                    spawnPoints[j].position
+                );
+
+                if (distance < 0.01f)
+                {
+                    error = "메모리 모드의 스폰 포인트 위치가 겹쳐 있습니다.";
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 
     private void Update()
     {
-        if (!OwnsSession || !gameManager.IsPlaying) return;
+        if (!OwnsSession || !gameManager.IsPlaying)
+            return;
+
         if (GameSettings.SelectedMode == GameMode.TimeAttack)
         {
             bool hasTarget = false;
+
             foreach (ShootingTarget target in activeTargets)
-                if (target != null) { hasTarget = true; break; }
-            if (!hasTarget) SpawnTimeAttackTarget();
+            {
+                if (target != null)
+                {
+                    hasTarget = true;
+                    break;
+                }
+            }
+
+            if (!hasTarget)
+            {
+                SpawnTimeAttackTarget();
+            }
+
             return;
         }
-        if (GameSettings.SelectedMode != GameMode.Round) return;
+
+        // 라운드 모드에서만 일정 간격으로 타겟을 생성한다.
+        // 메모리 타겟은 SpawnMemoryTargets에서 한 번에 생성한다.
+        if (GameSettings.SelectedMode != GameMode.Round)
+            return;
+
         spawnTimer += Time.deltaTime;
+
         if (spawnTimer >= currentSpawnInterval)
         {
             spawnTimer = 0f;
@@ -294,12 +417,15 @@ public class TargetSpawner : MonoBehaviour
         activeTargets[pointIndex] = newTarget;
 
         int version = sessionVersion;
+
         newTarget.InitializeForTimeAttack(
             scoreManager,
             () =>
             {
                 if (version == sessionVersion && OwnsSession)
+                {
                     OnTimeAttackTargetHit();
+                }
             }
         );
     }
@@ -335,9 +461,12 @@ public class TargetSpawner : MonoBehaviour
         );
 
         int version = sessionVersion;
+
         reactionTarget.InitializeForReaction(() =>
         {
-            if (version != sessionVersion || !OwnsSession) return;
+            if (version != sessionVersion || !OwnsSession)
+                return;
+
             reactionTarget = null;
 
             if (!stopped &&
@@ -364,8 +493,8 @@ public class TargetSpawner : MonoBehaviour
     }
 
     public Transform SpawnTrackingTarget(
-    out Vector3 minPosition,
-    out Vector3 maxPosition)
+        out Vector3 minPosition,
+        out Vector3 maxPosition)
     {
         minPosition = Vector3.zero;
         maxPosition = Vector3.zero;
@@ -442,6 +571,7 @@ public class TargetSpawner : MonoBehaviour
         );
 
         trackingTargetObject.SetActive(true);
+
         return trackingTargetObject.transform;
     }
 
@@ -456,24 +586,73 @@ public class TargetSpawner : MonoBehaviour
         trackingTargetObject = null;
     }
 
+    // 메모리 모드 시작 시 GameManager에서 호출한다.
+    // 배열 순서가 각 타겟의 번호가 된다.
+    public ShootingTarget[] SpawnMemoryTargets()
+    {
+        if (GameSettings.SelectedMode != GameMode.Memory ||
+            !OwnsSession ||
+            !isActiveAndEnabled)
+        {
+            return null;
+        }
+
+        if (!ValidateMode(GameMode.Memory, out string error))
+        {
+            Debug.LogError(error, this);
+            return null;
+        }
+
+        // 다시 시작하거나 다음 라운드로 넘어갈 때
+        // 이전 타겟이 남아 있지 않도록 정리한다.
+        ClearActiveTargets();
+
+        activeTargets = new ShootingTarget[spawnPoints.Length];
+
+        for (int i = 0; i < spawnPoints.Length; i++)
+        {
+            ShootingTarget newTarget = Instantiate(
+                memoryTargetPrefab,
+                spawnPoints[i].position,
+                memoryTargetPrefab.transform.rotation
+            );
+
+            activeTargets[i] = newTarget;
+
+            // 일반 Initialize를 호출하지 않으므로
+            // 제한 시간이 지나도 자동으로 제거되지 않는다.
+            newTarget.InitializeForMemory(this, i);
+        }
+
+        // 외부에서 반환 배열을 변경하더라도
+        // 스포너의 타겟 관리 배열은 유지한다.
+        return (ShootingTarget[])activeTargets.Clone();
+    }
+
+    // 현재 구역에서 생성한 타겟인지 확인한다.
     public bool OwnsTarget(ShootingTarget target)
     {
-        if (!OwnsSession || target == null) return false;
-        if (target == reactionTarget) return true;
+        if (!OwnsSession || target == null)
+            return false;
+
+        if (target == reactionTarget)
+            return true;
+
         if (activeTargets != null)
+        {
             foreach (ShootingTarget active in activeTargets)
-                if (target == active) return true;
+            {
+                if (target == active)
+                    return true;
+            }
+        }
+
         return false;
     }
 
-    public void StopSpawning()
+    // 일반·타임어택·메모리 타겟을 공통으로 정리한다.
+    private void ClearActiveTargets()
     {
-        stopped = true;
-        sessionVersion++;
-
-        ClearReactionTarget();
-        ClearTrackingTarget();
-
         if (activeTargets == null)
             return;
 
@@ -487,5 +666,15 @@ public class TargetSpawner : MonoBehaviour
 
             activeTargets[i] = null;
         }
+    }
+
+    public void StopSpawning()
+    {
+        stopped = true;
+        sessionVersion++;
+
+        ClearReactionTarget();
+        ClearTrackingTarget();
+        ClearActiveTargets();
     }
 }

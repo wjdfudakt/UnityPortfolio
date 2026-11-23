@@ -3,7 +3,8 @@ public enum GameMode
     Round,
     TimeAttack,
     ReactionTime,
-    Tracking
+    Tracking,
+    Memory
 }
 
 public static class GameSettings
