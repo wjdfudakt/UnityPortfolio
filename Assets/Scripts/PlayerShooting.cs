@@ -46,14 +46,20 @@ public class PlayerShooting : MonoBehaviour
     {
         bool isMemory = gameManager.IsMemory;
 
-        // 일반 모드의 통계는 ShootingStats에서 기록한다.
-        // 메모리 모드의 통계는 GameManager에서 기록한다.
+        // 기존 게임 결과에 사용하는 통계
         if (!isMemory)
         {
             if (shootingStats == null)
                 return;
 
             shootingStats.RegisterShot();
+        }
+
+        // 실제로 허용된 사격만 도전과제 발사 수에 기록한다.
+        // 메모리 모드의 빗나간 사격도 포함한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.RecordShot();
         }
 
         PlaySound(shotClip);
@@ -76,14 +82,13 @@ public class PlayerShooting : MonoBehaviour
             target = hit.collider.GetComponentInParent<ShootingTarget>();
         }
 
-        // 메모리 모드는 빗나간 사격도 판정해야 한다.
         if (isMemory)
         {
             HandleMemoryShot(target);
             return;
         }
 
-        // 일반 모드는 현재 구역에서 생성한 타겟만 처리한다.
+        // 현재 구역에서 생성한 타겟만 명중으로 처리한다.
         if (target == null ||
             gameManager.ActiveSpawner == null ||
             !gameManager.ActiveSpawner.OwnsTarget(target))
@@ -92,6 +97,13 @@ public class PlayerShooting : MonoBehaviour
         }
 
         shootingStats.RegisterHit(target.Type);
+
+        // Hit()에서 라운드가 끝날 수 있으므로
+        // 도전과제 명중 기록을 먼저 반영한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.RecordHit(target.Type);
+        }
 
         PlaySound(
             target.IsForbidden ? forbiddenHitClip : hitClip
@@ -107,8 +119,26 @@ public class PlayerShooting : MonoBehaviour
 
     private void HandleMemoryShot(ShootingTarget target)
     {
-        // null이면 허공 또는 타겟이 아닌 물체에 맞은 것이다.
-        // 다른 구역의 타겟인지도 GameManager에서 검사한다.
+        TargetSpawner activeSpawner = gameManager.ActiveSpawner;
+
+        bool hitMemoryTarget =
+            target != null &&
+            target.isActiveAndEnabled &&
+            target.IsMemoryTarget &&
+            activeSpawner != null &&
+            target.MemoryOwner == activeSpawner &&
+            activeSpawner.OwnsTarget(target);
+
+        if (!hitMemoryTarget)
+        {
+            // 빈 공간이나 벽을 맞히면 진행을 유지한다.
+            gameManager.SubmitMemoryShot(null);
+            return;
+        }
+
+        // 메모리 모드의 정답 명중 기록은
+        // GameManager의 정답 판정 안에서 연결한다.
+        // 여기에서 중복으로 RecordHit을 호출하지 않는다.
         bool correct = gameManager.SubmitMemoryShot(target);
 
         if (correct)
@@ -122,7 +152,6 @@ public class PlayerShooting : MonoBehaviour
         }
         else
         {
-            // 오답 또는 빗나감에는 기존 금지 타겟 효과음을 사용한다.
             PlaySound(forbiddenHitClip);
 
             if (crosshairUI != null)
@@ -130,9 +159,6 @@ public class PlayerShooting : MonoBehaviour
                 crosshairUI.ShowHit(true);
             }
         }
-
-        // 메모리 타겟에는 Hit()를 호출하지 않는다.
-        // 타겟을 유지한 채 GameManager가 정답 순서를 관리한다.
     }
 
     private void PlaySound(AudioClip clip)

@@ -13,6 +13,13 @@ public class GameManager : MonoBehaviour
     [SerializeField] private CrosshairUI crosshairUI;
     [SerializeField] private TMP_Text entryText;
 
+    [Header("Achievement UI")]
+    [SerializeField] private GameObject achievementsPanel;
+
+    public bool IsAchievementsOpen =>
+        achievementsPanel != null &&
+        achievementsPanel.activeSelf;
+
     [Header("Game Duration")]
     [SerializeField] private float gameDuration = 60f;
     [SerializeField] private float timeAttackDuration = 60f;
@@ -44,6 +51,16 @@ public class GameManager : MonoBehaviour
     [Header("Round Settings")]
     [SerializeField] private int firstTargetScore = 100;
     [SerializeField] private int scoreIncreasePerRound = 50;
+
+    [Header("Round Progression")]
+    [SerializeField, Min(1)]
+    private int resultEveryNRounds = 5;
+
+    [SerializeField, Min(0f)]
+    private float nextRoundDelay = 1f;
+
+    private bool autoNextRoundPending;
+    private float autoNextRoundTime;
 
     [Header("Round Penalty")]
     [SerializeField, Min(1)]
@@ -145,6 +162,10 @@ public class GameManager : MonoBehaviour
     private float trackingLostTime;
     private float trackingHoldTime;
 
+    // 도전과제용 연속 조준 시간.
+    // 기존 trackingHoldTime은 회복 시간까지만 증가하므로 별도로 측정한다.
+    private float trackingConsecutiveAimTime;
+
     // 메모리 모드
     private enum MemoryState
     {
@@ -207,6 +228,7 @@ public class GameManager : MonoBehaviour
     public bool CanLook =>
         InputReady &&
         !isPaused &&
+        !IsAchievementsOpen &&
         (!hasSession || !hasEnded) &&
         Cursor.lockState == CursorLockMode.Locked;
 
@@ -245,6 +267,7 @@ public class GameManager : MonoBehaviour
                 && InputReady
                 && !hasEnded
                 && !isPaused
+                && !autoNextRoundPending
                 && (
                     IsReactionTime ||
                     IsTracking ||
@@ -265,6 +288,11 @@ public class GameManager : MonoBehaviour
     {
         Time.timeScale = 1f;
         AudioListener.pause = false;
+
+        if (achievementsPanel != null)
+        {
+            achievementsPanel.SetActive(false);
+        }
 
         hasSession = false;
         hasEnded = false;
@@ -388,8 +416,24 @@ public class GameManager : MonoBehaviour
         if (!initialized)
             return;
 
-        if (Keyboard.current != null &&
-            Keyboard.current.escapeKey.wasPressedThisFrame &&
+        Keyboard keyboard = Keyboard.current;
+
+        // 도전과제 창이 열려 있으면 ESC는 창 닫기로 사용한다.
+        // 같은 입력으로 일시정지 창까지 열리지 않도록 바로 종료한다.
+        if (IsAchievementsOpen)
+        {
+            if (keyboard != null &&
+                keyboard.escapeKey.wasPressedThisFrame)
+            {
+                CloseAchievements();
+            }
+
+            return;
+        }
+
+        // 기존 일시정지 처리
+        if (keyboard != null &&
+            keyboard.escapeKey.wasPressedThisFrame &&
             !(hasSession && hasEnded))
         {
             if (isPaused)
@@ -398,10 +442,30 @@ public class GameManager : MonoBehaviour
                 PauseGame();
         }
 
+        // 허브에서 자유롭게 이동 가능한 상태일 때만 연다.
+        if (keyboard != null &&
+            keyboard.jKey.wasPressedThisFrame &&
+            CanMove)
+        {
+            OpenAchievements();
+            return;
+        }
+
         if (!hasSession || hasEnded || isPaused)
             return;
 
-        // 메모리 모드는 별도의 답 입력 시간을 사용한다.
+        // 라운드 클리어 후 자동 진행
+        if (autoNextRoundPending)
+        {
+            if (Time.time >= autoNextRoundTime)
+            {
+                roundIndex++;
+                BeginAttempt();
+            }
+
+            return;
+        }
+
         if (!IsReactionTime && !IsTracking && !IsMemory)
         {
             UpdateTimeText();
@@ -410,66 +474,6 @@ public class GameManager : MonoBehaviour
             {
                 EndGame(IsTimeAttack);
             }
-        }
-    }
-
-    private void LateUpdate()
-    {
-        if (IsMemory)
-        {
-            if (IsPlaying)
-            {
-                UpdateMemory();
-            }
-
-            return;
-        }
-
-        if (IsTracking)
-        {
-            if (IsPlaying)
-            {
-                UpdateTracking();
-            }
-
-            return;
-        }
-
-        if (!IsReactionTime || !IsPlaying)
-            return;
-
-        // 해당 프레임의 사격 입력 처리 후 타겟을 생성한다.
-        if (reactionState == ReactionState.Waiting &&
-            Time.timeAsDouble >= reactionNextTime)
-        {
-            bool spawned = targetSpawner.SpawnReactionTarget(
-                OnReactionTargetHit
-            );
-
-            if (!spawned)
-            {
-                reactionState = ReactionState.None;
-                timeText.text = "Check Reaction Setup";
-
-                Debug.LogError(
-                    "반응속도 타겟을 생성하지 못했습니다. " +
-                    "TargetSpawner의 연결과 활성 상태를 확인해 주세요.",
-                    this
-                );
-
-                return;
-            }
-
-            reactionSpawnTime = Time.timeAsDouble;
-            reactionSpawnFrame = Time.frameCount;
-
-            reactionState = ReactionState.TargetVisible;
-            timeText.text = "Hit!";
-        }
-        else if (reactionState == ReactionState.Feedback &&
-                 Time.timeAsDouble >= reactionNextTime)
-        {
-            BeginReactionWait();
         }
     }
 
@@ -697,7 +701,6 @@ public class GameManager : MonoBehaviour
         if (!CanAnswerMemory)
             return false;
 
-        // 결과창이 열리기 전에 마지막 발까지 집계한다.
         memoryShotCount++;
 
         memoryAnswerElapsed = Mathf.Clamp(
@@ -706,13 +709,15 @@ public class GameManager : MonoBehaviour
             memoryAnswerDuration
         );
 
+        // 빈 공간, 벽, 다른 구역의 타겟은 무시한다.
+        // 발사 수는 PlayerShooting에서 이미 도전과제에 기록했다.
         if (target == null ||
             !target.isActiveAndEnabled ||
             !target.IsMemoryTarget ||
+            targetSpawner == null ||
             target.MemoryOwner != targetSpawner ||
             !targetSpawner.OwnsTarget(target))
         {
-            FinishMemory(false, "Missed target");
             return false;
         }
 
@@ -722,14 +727,25 @@ public class GameManager : MonoBehaviour
             targetIndex >= memoryTargets.Length ||
             memoryTargets[targetIndex] != target)
         {
-            FinishMemory(false, "Invalid target");
             return false;
         }
 
         if (targetIndex != memorySequence[memoryCorrectCount])
         {
+            // 실패 처리 전에 순서 오류를 기록한다.
+            if (AchievementManager.Instance != null)
+            {
+                AchievementManager.Instance.RecordMemoryOrderError();
+            }
+
             FinishMemory(false, "Wrong order");
             return false;
+        }
+
+        // 마지막 정답도 완료 판정 전에 기록한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.RecordHit(TargetType.Static);
         }
 
         target.ShowMemoryCorrect();
@@ -809,6 +825,7 @@ public class GameManager : MonoBehaviour
         );
 
         trackingHoldTime = 0f;
+        trackingConsecutiveAimTime = 0f;
         trackingElapsedTime = 0f;
         trackingSuccessTime = 0f;
         trackingLostTime = 0f;
@@ -936,6 +953,10 @@ public class GameManager : MonoBehaviour
         {
             trackingSuccessTime += delta;
 
+            // 도전과제용 시간은 상한 없이 증가한다.
+            trackingConsecutiveAimTime += delta;
+
+            // 기존 실패 시간 회복에 사용하는 값
             trackingHoldTime = Mathf.Min(
                 trackingRecoveryDuration,
                 trackingHoldTime + delta
@@ -949,10 +970,20 @@ public class GameManager : MonoBehaviour
         else
         {
             trackingHoldTime = 0f;
+            trackingConsecutiveAimTime = 0f;
 
             trackingLostTime = Mathf.Min(
                 trackingLoseDuration,
                 trackingLostTime + delta
+            );
+        }
+
+        // 게임이 종료되는 마지막 프레임의 기록까지 전달한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.RecordTracking(
+                trackingElapsedTime,
+                trackingConsecutiveAimTime
             );
         }
 
@@ -1085,6 +1116,15 @@ public class GameManager : MonoBehaviour
             elapsed
         );
 
+        // 초를 밀리초로 변환한다.
+        // 마지막 측정도 테스트 종료 전에 기록한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.RecordReaction(
+                (float)(elapsed * 1000d)
+            );
+        }
+
         completedAttempts++;
 
         if (completedAttempts >= reactionAttempts)
@@ -1151,9 +1191,61 @@ public class GameManager : MonoBehaviour
     // 종료 및 결과 표시
     // --------------------------------------------------
 
+    private bool TryAdvanceWithoutResult(bool cleared)
+    {
+        // 실패하면 기존 결과창을 표시한다.
+        if (!cleared)
+            return false;
+
+        // 라운드와 메모리 모드에만 적용한다.
+        if (!IsRoundMode && !IsMemory)
+            return false;
+
+        int interval = Mathf.Max(1, resultEveryNRounds);
+
+        // 설정한 라운드 간격에 도달하면 기존 결과창을 표시한다.
+        if (CurrentRound % interval == 0)
+            return false;
+
+        autoNextRoundPending = true;
+
+        autoNextRoundTime =
+            Time.time + Mathf.Max(0f, nextRoundDelay);
+
+        // 클리어한 라운드의 타겟을 정리한다.
+        if (targetSpawner != null)
+        {
+            targetSpawner.StopSpawning();
+        }
+
+        resultPanel.SetActive(false);
+
+        roundText.text = IsMemory
+            ? "Memory R" + CurrentRound + " CLEAR!"
+            : "Round " + CurrentRound + " CLEAR!";
+
+        timeText.text =
+            "Next: Round " + (CurrentRound + 1);
+
+        return true;
+    }
+
     private void EndGame(bool cleared)
     {
-        if (hasEnded)
+        if (hasEnded || autoNextRoundPending)
+            return;
+
+        // 결과창을 생략하는 라운드도 완료 기록을 남긴다.
+        // 트래킹은 생존 종료를 1회 완료로 취급한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.FinishAttempt(
+                cleared || IsTracking
+            );
+        }
+
+        // 일반 클리어는 결과창 없이 자동 진행한다.
+        if (TryAdvanceWithoutResult(cleared))
             return;
 
         hasEnded = true;
@@ -1376,8 +1468,13 @@ public class GameManager : MonoBehaviour
 
     public void PauseGame()
     {
-        if (!initialized || isPaused || (hasSession && hasEnded))
+        if (!initialized ||
+            isPaused ||
+            IsAchievementsOpen ||
+            (hasSession && hasEnded))
+        {
             return;
+        }
 
         isPaused = true;
 
@@ -1438,6 +1535,14 @@ public class GameManager : MonoBehaviour
 
     public void ReturnToMainMenu()
     {
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.EndSession();
+        }
+
+        autoNextRoundPending = false;
+        autoNextRoundTime = 0f;
+
         if (targetSpawner != null)
         {
             targetSpawner.StopSpawning();
@@ -1529,6 +1634,15 @@ public class GameManager : MonoBehaviour
         hasSession = true;
 
         ClearEntryPrompt(null);
+
+        // 새로 입장했을 때만 입장 단위 기록을 초기화한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.BeginSession(
+                GameSettings.SelectedMode
+            );
+        }
+
         BeginAttempt();
 
         return hasSession;
@@ -1536,6 +1650,9 @@ public class GameManager : MonoBehaviour
 
     private void BeginAttempt()
     {
+        autoNextRoundPending = false;
+        autoNextRoundTime = 0f;
+
         if (activeEntrance == null || targetSpawner == null)
             return;
 
@@ -1598,6 +1715,13 @@ public class GameManager : MonoBehaviour
             CurrentRound
         );
 
+        // 현재 라운드 또는 측정 1회의 기록을 시작한다.
+        // 입장 이후 누적된 금지 타겟 명중·순서 오류는 유지한다.
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.BeginAttempt(CurrentRound);
+        }
+
         ApplyCursor();
 
         if (IsMemory)
@@ -1645,6 +1769,14 @@ public class GameManager : MonoBehaviour
     {
         if (!initialized || !hasSession)
             return;
+
+        if (AchievementManager.Instance != null)
+        {
+            AchievementManager.Instance.EndSession();
+        }
+
+        autoNextRoundPending = false;
+        autoNextRoundTime = 0f;
 
         Transform destination =
             activeEntrance != null &&
@@ -1746,11 +1878,56 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    public void OpenAchievements()
+    {
+        // 도전과제 창은 허브에서만 열 수 있다.
+        if (!initialized ||
+            !InputReady ||
+            hasSession ||
+            isPaused ||
+            IsAchievementsOpen)
+        {
+            return;
+        }
+
+        if (achievementsPanel == null)
+        {
+            Debug.LogError(
+                "GameManager의 Achievements Panel을 연결해 주세요.",
+                this
+            );
+
+            return;
+        }
+
+        ClearEntryPrompt(null);
+
+        // 같은 Canvas 안에서 다른 UI보다 앞에 표시한다.
+        achievementsPanel.transform.SetAsLastSibling();
+        achievementsPanel.SetActive(true);
+
+        ApplyCursor();
+    }
+
+    public void CloseAchievements()
+    {
+        if (!initialized || !IsAchievementsOpen)
+            return;
+
+        achievementsPanel.SetActive(false);
+
+        // 닫기 버튼을 누른 프레임의 입력이 게임에 전달되지 않도록 한다.
+        resumeFrame = Time.frameCount;
+
+        ApplyCursor();
+    }
+
     private void ApplyCursor()
     {
         bool locked =
             initialized &&
             !isPaused &&
+            !IsAchievementsOpen &&
             (!hasSession || !hasEnded);
 
         Cursor.lockState = locked
