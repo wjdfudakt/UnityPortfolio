@@ -477,6 +477,65 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    private void LateUpdate()
+    {
+        if (!IsPlaying || IsAchievementsOpen)
+            return;
+
+        // 기억력 모드: 준비 → 순서 표시 → 입력 대기
+        if (IsMemory)
+        {
+            UpdateMemory();
+            return;
+        }
+
+        // 트래킹 모드: 표적 이동 및 조준 유지·이탈 판정
+        if (IsTracking)
+        {
+            UpdateTracking();
+            return;
+        }
+
+        if (!IsReactionTime)
+            return;
+
+        // 반응속도 모드:
+        // 해당 프레임의 사격 입력을 처리한 뒤 표적을 생성한다.
+        if (reactionState == ReactionState.Waiting &&
+            Time.timeAsDouble >= reactionNextTime)
+        {
+            bool spawned = targetSpawner.SpawnReactionTarget(
+                OnReactionTargetHit
+            );
+
+            if (!spawned)
+            {
+                reactionState = ReactionState.None;
+                timeText.text = "Check Reaction Setup";
+
+                Debug.LogError(
+                    "반응속도 타겟을 생성하지 못했습니다. " +
+                    "TargetSpawner의 연결과 활성 상태를 확인해 주세요.",
+                    this
+                );
+
+                return;
+            }
+
+            reactionSpawnTime = Time.timeAsDouble;
+            reactionSpawnFrame = Time.frameCount;
+
+            reactionState = ReactionState.TargetVisible;
+            timeText.text = "Hit!";
+        }
+        else if (reactionState == ReactionState.Feedback &&
+                 Time.timeAsDouble >= reactionNextTime)
+        {
+            // 측정 결과 또는 Too Early 표시가 끝나면 다시 대기한다.
+            BeginReactionWait();
+        }
+    }
+
     // --------------------------------------------------
     // 메모리 모드
     // --------------------------------------------------
