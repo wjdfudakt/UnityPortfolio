@@ -52,6 +52,10 @@ public class AchievementManager : MonoBehaviour
     private int attemptShots;
     private int attemptValidHits;
 
+    // 명중률 계산용: 일반 타겟을 하나 이상 맞힌 발사 횟수
+    private int attemptSuccessfulShots;
+    private bool currentShotHasValidHit;
+
     private int reactionMeasurementCount;
     private double reactionTotalMilliseconds;
 
@@ -459,11 +463,13 @@ public class AchievementManager : MonoBehaviour
         attemptShots = 0;
         attemptValidHits = 0;
 
+        attemptSuccessfulShots = 0;
+        currentShotHasValidHit = false;
+
         reactionMeasurementCount = 0;
         reactionTotalMilliseconds = 0d;
 
-        // 재도전과 자동 라운드 진행에서는
-        // sessionForbiddenHits와 sessionMemoryOrderErrors를 유지한다.
+        // 입장 이후의 금지 타겟 명중과 기억력 순서 오류는 유지한다.
     }
 
     public void EndSession()
@@ -490,6 +496,8 @@ public class AchievementManager : MonoBehaviour
         {
             attemptShots++;
         }
+
+        currentShotHasValidHit = false;
     }
 
     public void RecordHit(TargetType type)
@@ -505,10 +513,22 @@ public class AchievementManager : MonoBehaviour
                 sessionForbiddenHits++;
             }
 
-            // 금지 타겟은 유효 명중과 누적 명중에서 제외한다.
+            // 금지 타겟은 일반 타겟 명중 수와 명중률에서 제외한다.
             return;
         }
 
+        // 한 발사에서 처음으로 일반 타겟을 맞혔을 때만 증가한다.
+        if (attemptShots > 0 && !currentShotHasValidHit)
+        {
+            currentShotHasValidHit = true;
+
+            if (attemptSuccessfulShots < int.MaxValue)
+            {
+                attemptSuccessfulShots++;
+            }
+        }
+
+        // 타겟 수는 실제로 맞힌 일반 타겟마다 증가한다.
         if (attemptValidHits < int.MaxValue)
         {
             attemptValidHits++;
@@ -686,9 +706,10 @@ public class AchievementManager : MonoBehaviour
                 continue;
             }
 
+            // 타겟 수가 아니라 모든 발사가 명중했는지 확인한다.
             if (attemptShots >= data.MinimumShots &&
                 attemptShots > 0 &&
-                attemptValidHits == attemptShots)
+                attemptSuccessfulShots == attemptShots)
             {
                 UpdateProgress(data, 1f);
             }
@@ -698,7 +719,7 @@ public class AchievementManager : MonoBehaviour
     private void CheckTimeAttackAccuracy()
     {
         float accuracy = attemptShots > 0
-            ? (float)attemptValidHits / attemptShots * 100f
+            ? (float)attemptSuccessfulShots / attemptShots * 100f
             : 0f;
 
         foreach (AchievementData data in achievements)
@@ -711,6 +732,7 @@ public class AchievementManager : MonoBehaviour
 
             if (accuracy >= data.MinimumAccuracy)
             {
+                // 명중률 조건을 만족하면 실제 타겟 명중 수를 반영한다.
                 UpdateProgress(data, attemptValidHits);
             }
         }

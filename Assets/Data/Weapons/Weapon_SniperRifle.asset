@@ -1,0 +1,44 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fc908ff847c63d7439d1feb68f63d1a8, type: 3}
+  m_Name: Weapon_SniperRifle
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponData
+  weaponId: sniper_rifle
+  displayName: "\uC800\uACA9\uC18C\uCD1D"
+  description: "\uB290\uB9B0 \uBC1C\uC0AC \uAC04\uACA9\uACFC \uC815\uBC00\uD55C \uC870\uC900\uC774 \uD2B9\uC9D5\uC778 \uCD1D\uAE30"
+  weaponType: 2
+  fireMode: 0
+  modelPrefab: {fileID: 1829597508155286, guid: 7359baf27e84aa44cafac3788c8be0f1, type: 3}
+  modelLocalPosition: {x: 0, y: 0, z: 0}
+  modelLocalRotation: {x: 0, y: 0, z: 0}
+  modelLocalScale: {x: 1, y: 1, z: 1}
+  fireInterval: 1
+  shootingDistance: 100
+  magazineSize: 5
+  reloadDuration: 2.5
+  pelletsPerShot: 1
+  spreadAngle: 0
+  recoilDistance: 0.08
+  recoilAngle: 9
+  recoilKickSpeed: 30
+  recoilReturnSpeed: 7
+  cameraRecoilPitch: 2.5
+  cameraRecoilSpeed: 20
+  cameraRecoilReturnSpeed: 8
+  cameraRecoilReturnDelay: 0.12
+  cameraRecoilMaxAngle: 10
+  canUseScope: 1
+  scopeFieldOfView: 20
+  scopeTransitionSpeed: 12
+  scopeSensitivityMultiplier: 0.35
+  shotClip: {fileID: 0}
+  reloadClip: {fileID: 0}

@@ -13,6 +13,13 @@ public class GameManager : MonoBehaviour
     [SerializeField] private CrosshairUI crosshairUI;
     [SerializeField] private TMP_Text entryText;
 
+    [Header("Armory UI")]
+    [SerializeField] private GameObject armoryPanel;
+
+    public bool IsArmoryOpen =>
+        armoryPanel != null &&
+        armoryPanel.activeSelf;
+
     [Header("Achievement UI")]
     [SerializeField] private GameObject achievementsPanel;
 
@@ -229,12 +236,19 @@ public class GameManager : MonoBehaviour
         InputReady &&
         !isPaused &&
         !IsAchievementsOpen &&
+        !IsArmoryOpen &&
         (!hasSession || !hasEnded) &&
         Cursor.lockState == CursorLockMode.Locked;
 
     public bool CanMove => CanLook && !hasSession;
 
     public bool CanEnterZone => CanMove;
+
+    public bool CanChangeWeapon =>
+        InputReady &&
+        !hasSession &&
+        !isPaused &&
+        !IsAchievementsOpen;
 
     public bool IsRoundMode =>
         GameSettings.SelectedMode == GameMode.Round;
@@ -292,6 +306,11 @@ public class GameManager : MonoBehaviour
         if (achievementsPanel != null)
         {
             achievementsPanel.SetActive(false);
+        }
+
+        if (armoryPanel != null)
+        {
+            armoryPanel.SetActive(false);
         }
 
         hasSession = false;
@@ -418,8 +437,19 @@ public class GameManager : MonoBehaviour
 
         Keyboard keyboard = Keyboard.current;
 
-        // 도전과제 창이 열려 있으면 ESC는 창 닫기로 사용한다.
-        // 같은 입력으로 일시정지 창까지 열리지 않도록 바로 종료한다.
+        // 총기 선택 창에서 ESC를 누르면 이 창만 닫는다.
+        if (IsArmoryOpen)
+        {
+            if (keyboard != null &&
+                keyboard.escapeKey.wasPressedThisFrame)
+            {
+                CloseArmory();
+            }
+
+            return;
+        }
+
+        // 도전과제 창에서 ESC를 누르면 이 창만 닫는다.
         if (IsAchievementsOpen)
         {
             if (keyboard != null &&
@@ -448,6 +478,16 @@ public class GameManager : MonoBehaviour
             CanMove)
         {
             OpenAchievements();
+            return;
+        }
+
+        // 임시 테스트 입력.
+        // 보관소를 만든 뒤에는 이 블록을 제거한다.
+        if (keyboard != null &&
+            keyboard.bKey.wasPressedThisFrame &&
+            CanMove)
+        {
+            OpenArmory();
             return;
         }
 
@@ -1294,6 +1334,9 @@ public class GameManager : MonoBehaviour
         if (hasEnded || autoNextRoundPending)
             return;
 
+        // 결과창 표시 또는 자동 다음 라운드 대기 전에 재장전을 취소한다.
+        playerShooting.CancelReload();
+
         // 결과창을 생략하는 라운드도 완료 기록을 남긴다.
         // 트래킹은 생존 종료를 1회 완료로 취급한다.
         if (AchievementManager.Instance != null)
@@ -1530,6 +1573,7 @@ public class GameManager : MonoBehaviour
         if (!initialized ||
             isPaused ||
             IsAchievementsOpen ||
+            IsArmoryOpen ||
             (hasSession && hasEnded))
         {
             return;
@@ -1754,7 +1798,8 @@ public class GameManager : MonoBehaviour
 
         player.Teleport(activeEntrance.PlayPoint);
 
-        playerShooting.ResetFeedback();
+        // 새 시도마다 재장전과 발사 대기 시간을 초기화하고 탄창을 채운다.
+        playerShooting.ResetForAttempt();
 
         if (crosshairUI != null)
         {
@@ -1939,12 +1984,12 @@ public class GameManager : MonoBehaviour
 
     public void OpenAchievements()
     {
-        // 도전과제 창은 허브에서만 열 수 있다.
         if (!initialized ||
             !InputReady ||
             hasSession ||
             isPaused ||
-            IsAchievementsOpen)
+            IsAchievementsOpen ||
+            IsArmoryOpen)
         {
             return;
         }
@@ -1961,7 +2006,6 @@ public class GameManager : MonoBehaviour
 
         ClearEntryPrompt(null);
 
-        // 같은 Canvas 안에서 다른 UI보다 앞에 표시한다.
         achievementsPanel.transform.SetAsLastSibling();
         achievementsPanel.SetActive(true);
 
@@ -1981,12 +2025,50 @@ public class GameManager : MonoBehaviour
         ApplyCursor();
     }
 
+    public void OpenArmory()
+    {
+        // 자유롭게 이동 가능한 허브 상태에서만 열 수 있다.
+        if (!CanMove || IsArmoryOpen)
+            return;
+
+        if (armoryPanel == null)
+        {
+            Debug.LogError(
+                "GameManager의 Armory Panel을 연결해 주세요.",
+                this
+            );
+
+            return;
+        }
+
+        ClearEntryPrompt(null);
+
+        armoryPanel.transform.SetAsLastSibling();
+        armoryPanel.SetActive(true);
+
+        ApplyCursor();
+    }
+
+    public void CloseArmory()
+    {
+        if (!initialized || !IsArmoryOpen)
+            return;
+
+        armoryPanel.SetActive(false);
+
+        // 닫기 버튼을 누른 프레임의 입력이 게임에 전달되지 않게 한다.
+        resumeFrame = Time.frameCount;
+
+        ApplyCursor();
+    }
+
     private void ApplyCursor()
     {
         bool locked =
             initialized &&
             !isPaused &&
             !IsAchievementsOpen &&
+            !IsArmoryOpen &&
             (!hasSession || !hasEnded);
 
         Cursor.lockState = locked
@@ -2000,6 +2082,11 @@ public class GameManager : MonoBehaviour
     {
         if (!focused && initialized)
         {
+            if (IsArmoryOpen)
+            {
+                CloseArmory();
+            }
+
             PauseGame();
         }
     }

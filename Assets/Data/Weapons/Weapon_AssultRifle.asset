@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fc908ff847c63d7439d1feb68f63d1a8, type: 3}
+  m_Name: Weapon_AssultRifle
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponData
+  weaponId: assault_rifle
+  displayName: "\uB3CC\uACA9\uC18C\uCD1D"
+  description: "\uC88C\uD074\uB9AD\uB3D9\uC548 \uC5F0\uC18D\uC73C\uB85C \uBC1C\uC0AC\uD558\uB294 \uCD1D\uAE30"
+  weaponType: 1
+  fireMode: 1
+  modelPrefab: {fileID: 1117582899397640, guid: 689946d975a0e55449b1e7ae41933e73, type: 3}
+  modelLocalPosition: {x: 0, y: 0, z: 0}
+  modelLocalRotation: {x: 0, y: 0, z: 0}
+  modelLocalScale: {x: 1, y: 1, z: 1}
+  fireInterval: 0.1
+  shootingDistance: 100
+  magazineSize: 30
+  reloadDuration: 2
+  pelletsPerShot: 1
+  spreadAngle: 0
+  recoilDistance: 0.02
+  recoilAngle: 3
+  recoilKickSpeed: 45
+  recoilReturnSpeed: 18
+  cameraRecoilPitch: 0.45
+  cameraRecoilSpeed: 35
+  cameraRecoilReturnSpeed: 8
+  cameraRecoilReturnDelay: 0.12
+  cameraRecoilMaxAngle: 10
+  shotClip: {fileID: 0}
+  reloadClip: {fileID: 0}
